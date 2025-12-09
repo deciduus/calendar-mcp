@@ -42,7 +42,7 @@ This project implements a Python-based MCP (Model Context Protocol) server that 
     *   **Enable the Google Calendar API** for your project.
     *   Navigate to "APIs & Services" > "Credentials".
     *   Click "+ CREATE CREDENTIALS" > "OAuth client ID".
-    *   Select **Application type: Desktop app**. Give it a name (e.g., "Calendar MCP Local").
+    *   Select **Application type: Web app**. Give it a name (e.g., "Calendar MCP Local").
     *   Click "CREATE". A pop-up will show your **Client ID** and **Client Secret**. **Copy these now** - you'll need them for the `.env` file. You *do not* need to download the JSON file offered for other app types.
     *   Configure the **OAuth consent screen**:
         *   Set User Type to "External".
