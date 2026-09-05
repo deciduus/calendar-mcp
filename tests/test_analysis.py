@@ -1,21 +1,19 @@
-"""Unit tests for src/analysis.py.
+"""Unit tests for calendar_mcp/analysis.py.
 
 No network and no Google credentials: ``calendar_actions.find_events`` is
 patched with a stub returning hand-made responses.
 
-Note: ``analysis.py`` accepts both the raw ISO strings returned by the API and
-the ``datetime``/``date`` objects the Pydantic models in ``src/models.py``
-coerce them to. The raw-string form is used for the logic tests here; the
-model-backed form is covered at the bottom of this module.
+``analysis.py`` accepts both the raw ISO strings the API returns and the
+``datetime``/``date`` objects the pydantic models coerce them to. The
+raw-string form is used for the logic tests here; the model-backed form is
+covered at the bottom of this module.
 """
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from src import analysis
-from src.models import EventsResponse
+from calendar_mcp import analysis
+from calendar_mcp.models import EventsResponse
 
 UTC = timezone.utc
 CREDS = MagicMock(name="credentials")
@@ -129,6 +127,37 @@ def test_project_recurring_skips_event_without_rrule():
     assert _project([bad]) == []
 
 
+def test_project_recurring_exdate_with_tzid_is_resolved():
+    # 09:00 UTC standup; the EXDATE is given as 10:00 Europe/Zurich (UTC+1 in
+    # January), which is the same instant, so Jan 3 must be excluded.
+    master = _event(
+        "evt-tzid", "Standup",
+        _dt(dateTime="2026-01-01T09:00:00+00:00"),
+        _dt(dateTime="2026-01-01T09:15:00+00:00"),
+        recurrence=["RRULE:FREQ=DAILY;COUNT=4", "EXDATE;TZID=Europe/Zurich:20260103T100000"],
+    )
+    occurrences = _project([master])
+    assert [o.occurrence_start for o in occurrences] == [
+        datetime(2026, 1, 1, 9, tzinfo=UTC),
+        datetime(2026, 1, 2, 9, tzinfo=UTC),
+        datetime(2026, 1, 4, 9, tzinfo=UTC),
+    ]
+
+
+def test_project_recurring_honours_rdate():
+    master = _event(
+        "evt-rdate", "Standup",
+        _dt(dateTime="2026-01-01T09:00:00+00:00"),
+        _dt(dateTime="2026-01-01T09:15:00+00:00"),
+        recurrence=["RRULE:FREQ=DAILY;COUNT=1", "RDATE:20260107T090000Z"],
+    )
+    occurrences = _project([master])
+    assert [o.occurrence_start for o in occurrences] == [
+        datetime(2026, 1, 1, 9, tzinfo=UTC),
+        datetime(2026, 1, 7, 9, tzinfo=UTC),
+    ]
+
+
 # --- analyze_busyness ---------------------------------------------------------
 
 def _analyze(items, **kwargs):
@@ -178,7 +207,7 @@ def test_analyze_busyness_is_keyed_by_date_objects():
     assert all(isinstance(k, date) for k in _analyze([TIMED]))
 
 
-# --- Pydantic-model inputs and real find_events signature ---------------------------------------------------------------
+# --- Pydantic-model inputs and the real find_events signature ------------------
 
 MODEL_EVENT = {
     "id": "e1",
@@ -200,6 +229,7 @@ def test_analysis_accepts_pydantic_event_models():
 
 
 def test_project_recurring_matches_real_find_events_signature():
+    # autospec makes the stub reject any kwarg the real find_events lacks.
     with patch.object(analysis.calendar_actions, "find_events", autospec=True) as mocked:
         mocked.return_value = EventsResponse(items=[])
         analysis.project_recurring_events(
@@ -210,18 +240,11 @@ def test_project_recurring_matches_real_find_events_signature():
         )
 
 
-def test_project_recurring_exdate_with_tzid_is_resolved():
-    # 09:00 UTC standup; the EXDATE is given as 10:00 Europe/Zurich (UTC+1 in
-    # January), which is the same instant, so Jan 3 must be excluded.
-    master = _event(
-        "evt-tzid", "Standup",
-        _dt(dateTime="2026-01-01T09:00:00+00:00"),
-        _dt(dateTime="2026-01-01T09:15:00+00:00"),
-        recurrence=["RRULE:FREQ=DAILY;COUNT=4", "EXDATE;TZID=Europe/Zurich:20260103T100000"],
-    )
-    occurrences = _project([master])
-    assert [o.occurrence_start for o in occurrences] == [
-        datetime(2026, 1, 1, 9, tzinfo=UTC),
-        datetime(2026, 1, 2, 9, tzinfo=UTC),
-        datetime(2026, 1, 4, 9, tzinfo=UTC),
-    ]
+def test_analyze_busyness_matches_real_find_events_signature():
+    with patch.object(analysis.calendar_actions, "find_events", autospec=True) as mocked:
+        mocked.return_value = EventsResponse(items=[])
+        analysis.analyze_busyness(
+            credentials=CREDS,
+            time_min=datetime(2026, 1, 1, tzinfo=UTC),
+            time_max=datetime(2026, 1, 10, tzinfo=UTC),
+        )

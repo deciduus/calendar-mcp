@@ -288,3 +288,226 @@ class DailyBusynessStats(BaseModel):
 class AnalyzeBusynessResponse(BaseModel):
     # Use string representation for date keys in JSON
     busyness_by_date: Dict[str, DailyBusynessStats] = Field(..., description="Mapping of date string (YYYY-MM-DD) to busyness stats") 
+
+# ---------------------------------------------------------------------------
+# MCP tool result models
+#
+# These are the *structured output* schemas the MCP tools in
+# ``calendar_mcp.server`` declare as their return types. They are deliberately
+# flatter and smaller than the raw Google resources above: every timestamp is a
+# plain ISO 8601 string so the shape survives JSON round-tripping unchanged, and
+# only the fields an assistant actually reasons about are included.
+# ---------------------------------------------------------------------------
+
+
+def _iso(value: Any) -> Optional[str]:
+    """Renders a date/datetime (or passes through a string) as ISO 8601."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    return str(value)
+
+
+class AttendeeInfo(BaseModel):
+    """One attendee of an event, flattened for tool output."""
+    email: Optional[str] = Field(None, description="Attendee email address.")
+    display_name: Optional[str] = Field(None, description="Attendee display name, if Google knows one.")
+    response_status: Optional[str] = Field(
+        None, description="RSVP state: 'accepted', 'declined', 'tentative' or 'needsAction'."
+    )
+    optional: bool = Field(False, description="True when attendance is marked optional.")
+    organizer: bool = Field(False, description="True when this attendee organises the event.")
+    is_self: bool = Field(False, description="True when this attendee is the authenticated user.")
+
+    @classmethod
+    def from_attendee(cls, attendee: "EventAttendee") -> "AttendeeInfo":
+        return cls(
+            email=str(attendee.email) if attendee.email else None,
+            display_name=attendee.displayName,
+            response_status=attendee.responseStatus,
+            optional=bool(attendee.optional),
+            organizer=bool(attendee.organizer),
+            is_self=bool(getattr(attendee, "self", False)),
+        )
+
+
+class EventInfo(BaseModel):
+    """A calendar event, flattened for tool output."""
+    id: Optional[str] = Field(None, description="Event ID. Pass this to update/move/delete tools.")
+    summary: Optional[str] = Field(None, description="Event title.")
+    description: Optional[str] = Field(None, description="Event description / notes.")
+    location: Optional[str] = Field(None, description="Event location.")
+    start: Optional[str] = Field(
+        None, description="Start as ISO 8601 (date-time with offset, or a plain date for all-day events)."
+    )
+    end: Optional[str] = Field(None, description="End as ISO 8601, same convention as 'start'.")
+    all_day: bool = Field(False, description="True when the event occupies whole days rather than a time range.")
+    time_zone: Optional[str] = Field(None, description="IANA timezone the event's start is expressed in, if given.")
+    status: Optional[str] = Field(None, description="'confirmed', 'tentative' or 'cancelled'.")
+    html_link: Optional[str] = Field(None, description="Link to the event in the Google Calendar web UI.")
+    organizer_email: Optional[str] = Field(None, description="Email of the event organizer.")
+    attendees: List[AttendeeInfo] = Field(default_factory=list, description="Invited attendees and their RSVPs.")
+    recurrence: Optional[List[str]] = Field(None, description="RRULE/EXDATE lines when this is a recurring master event.")
+    recurring_event_id: Optional[str] = Field(
+        None, description="ID of the master event when this is one instance of a recurring series."
+    )
+
+    @classmethod
+    def from_event(cls, event: "GoogleCalendarEvent") -> "EventInfo":
+        """Builds an EventInfo from the richer GoogleCalendarEvent model."""
+        start, end = event.start, event.end
+        all_day = bool(start and start.dateTime is None and start.date is not None)
+        return cls(
+            id=event.id,
+            summary=event.summary,
+            description=event.description,
+            location=event.location,
+            start=_iso(start.dateTime or start.date) if start else None,
+            end=_iso(end.dateTime or end.date) if end else None,
+            all_day=all_day,
+            time_zone=start.timeZone if start else None,
+            status=event.status,
+            html_link=event.html_link,
+            organizer_email=(
+                str(event.organizer.email) if event.organizer and event.organizer.email else None
+            ),
+            attendees=[AttendeeInfo.from_attendee(a) for a in (event.attendees or [])],
+            recurrence=event.recurrence,
+            recurring_event_id=event.recurring_event_id,
+        )
+
+
+class EventResult(BaseModel):
+    """Result of a tool that creates, updates, moves or RSVPs to a single event."""
+    calendar_id: str = Field(..., description="Calendar the event lives on.")
+    event: EventInfo = Field(..., description="The event after the operation.")
+    message: str = Field("", description="One-line human-readable summary of what happened.")
+
+
+class EventListResult(BaseModel):
+    """Result of a tool that returns several events."""
+    calendar_id: str = Field(..., description="Calendar that was searched.")
+    count: int = Field(..., description="Number of events returned.")
+    events: List[EventInfo] = Field(default_factory=list, description="The matching events, earliest first.")
+    time_zone: Optional[str] = Field(None, description="IANA timezone of the calendar that was searched.")
+
+
+class CalendarInfo(BaseModel):
+    """One calendar from the user's calendar list."""
+    id: str = Field(..., description="Calendar ID. Pass this as calendar_id to other tools.")
+    summary: Optional[str] = Field(None, description="Calendar name.")
+    description: Optional[str] = Field(None, description="Calendar description.")
+    time_zone: Optional[str] = Field(None, description="IANA timezone of the calendar, e.g. 'Europe/Berlin'.")
+    access_role: Optional[str] = Field(None, description="The user's role: 'owner', 'writer', 'reader', 'freeBusyReader'.")
+    primary: bool = Field(False, description="True for the user's main calendar (also addressable as 'primary').")
+
+    @classmethod
+    def from_entry(cls, entry: "CalendarListEntry") -> "CalendarInfo":
+        return cls(
+            id=entry.id,
+            summary=entry.summaryOverride or entry.summary,
+            description=entry.description,
+            time_zone=entry.timeZone,
+            access_role=entry.accessRole,
+            primary=bool(entry.primary),
+        )
+
+
+class CalendarListResult(BaseModel):
+    """Result of the list_calendars tool."""
+    count: int = Field(..., description="Number of calendars returned.")
+    calendars: List[CalendarInfo] = Field(default_factory=list, description="The user's calendars.")
+
+
+class DeleteEventResult(BaseModel):
+    """Result of the delete_event tool."""
+    calendar_id: str = Field(..., description="Calendar the event was on.")
+    event_id: str = Field(..., description="ID of the deleted event.")
+    deleted: bool = Field(..., description="True when the event was removed.")
+    confirmed_by_user: Optional[bool] = Field(
+        None,
+        description="True/False when the client answered a confirmation prompt; null when the client does not support elicitation.",
+    )
+    message: str = Field("", description="One-line human-readable summary of what happened.")
+
+
+class AttendeeStatusEntry(BaseModel):
+    """One attendee's RSVP state."""
+    email: str = Field(..., description="Attendee email address.")
+    response_status: str = Field(
+        ..., description="'accepted', 'declined', 'tentative' or 'needsAction'."
+    )
+
+
+class AttendeeStatusResult(BaseModel):
+    """Result of the check_attendee_status tool."""
+    calendar_id: str = Field(..., description="Calendar the event lives on.")
+    event_id: str = Field(..., description="Event that was checked.")
+    count: int = Field(..., description="Number of attendees reported.")
+    attendees: List[AttendeeStatusEntry] = Field(
+        default_factory=list, description="Attendees and their current RSVP state."
+    )
+
+
+class BusyPeriod(BaseModel):
+    """A single busy interval."""
+    start: str = Field(..., description="Interval start, ISO 8601.")
+    end: str = Field(..., description="Interval end, ISO 8601.")
+
+
+class CalendarBusyPeriods(BaseModel):
+    """Busy intervals for one calendar."""
+    calendar_id: str = Field(..., description="Calendar these intervals belong to.")
+    busy: List[BusyPeriod] = Field(default_factory=list, description="Busy intervals, merged and sorted.")
+    errors: List[str] = Field(
+        default_factory=list,
+        description="Reasons this calendar could not be read (e.g. 'notFound', 'forbidden'), if any.",
+    )
+
+
+class FreeBusyResult(BaseModel):
+    """Result of the query_free_busy tool."""
+    time_min: str = Field(..., description="Start of the queried window, ISO 8601.")
+    time_max: str = Field(..., description="End of the queried window, ISO 8601.")
+    calendars: List[CalendarBusyPeriods] = Field(
+        default_factory=list, description="Per-calendar busy intervals."
+    )
+
+
+class DayBusyness(BaseModel):
+    """Aggregated event load for a single day."""
+    date: str = Field(..., description="The day, as YYYY-MM-DD.")
+    event_count: int = Field(..., description="Number of events that day.")
+    total_duration_minutes: float = Field(..., description="Total scheduled minutes that day.")
+
+
+class BusynessResult(BaseModel):
+    """Result of the analyze_busyness tool."""
+    calendar_id: str = Field(..., description="Calendar that was analysed.")
+    time_min: str = Field(..., description="Start of the analysed window, ISO 8601.")
+    time_max: str = Field(..., description="End of the analysed window, ISO 8601.")
+    days: List[DayBusyness] = Field(default_factory=list, description="Per-day totals, in date order.")
+    total_events: int = Field(0, description="Sum of event_count across all days.")
+    total_duration_minutes: float = Field(0.0, description="Sum of total_duration_minutes across all days.")
+
+
+class ProjectedOccurrence(BaseModel):
+    """One computed occurrence of a recurring event."""
+    event_id: str = Field(..., description="ID of the master recurring event.")
+    summary: str = Field(..., description="Title of the recurring event.")
+    start: str = Field(..., description="Occurrence start, ISO 8601.")
+    end: str = Field(..., description="Occurrence end, ISO 8601.")
+
+
+class ProjectedEventsResult(BaseModel):
+    """Result of the project_recurring_events tool."""
+    calendar_id: str = Field(..., description="Calendar that was projected.")
+    time_min: str = Field(..., description="Start of the projection window, ISO 8601.")
+    time_max: str = Field(..., description="End of the projection window, ISO 8601.")
+    count: int = Field(..., description="Number of projected occurrences.")
+    occurrences: List[ProjectedOccurrence] = Field(
+        default_factory=list, description="Computed occurrences, earliest first."
+    )
