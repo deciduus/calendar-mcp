@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
+from zoneinfo import ZoneInfo
 
 from google.oauth2.credentials import Credentials
 from dateutil import rrule
@@ -190,11 +191,22 @@ def project_recurring_events(
                 parts = prop_str.split(':', 1)
                 if len(parts) != 2:
                     continue
+                # Resolve an explicit TZID param (e.g. "EXDATE;TZID=Europe/Zurich:...");
+                # values without one are assumed to be in dtstart's timezone.
+                prop_tz = None
+                for param in parts[0].split(';')[1:]:
+                    if param.upper().startswith('TZID='):
+                        try:
+                            prop_tz = ZoneInfo(param[5:])
+                        except Exception:
+                            logger.warning(f"Unknown TZID '{param[5:]}' for event {event.id}; assuming dtstart tz")
                 for date_str in parts[1].split(','):
                     try:
-                        # isoparse handles both "20240101" and "20240101T100000Z";
-                        # TZID params are not resolved (dtstart's tz is assumed).
-                        add(_match_tz(date_parser.isoparse(date_str.strip()), dtstart_obj))
+                        # isoparse handles both "20240101" and "20240101T100000Z".
+                        parsed = date_parser.isoparse(date_str.strip())
+                        if prop_tz is not None and parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=prop_tz)
+                        add(_match_tz(parsed, dtstart_obj))
                     except ValueError:
                         logger.warning(f"Could not parse '{prop_str[:6]}' value '{date_str}' for event {event.id}")
 

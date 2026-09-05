@@ -208,3 +208,20 @@ def test_project_recurring_matches_real_find_events_signature():
             time_max=datetime(2026, 1, 10, tzinfo=UTC),
             event_query="Standup",
         )
+
+
+def test_project_recurring_exdate_with_tzid_is_resolved():
+    # 09:00 UTC standup; the EXDATE is given as 10:00 Europe/Zurich (UTC+1 in
+    # January), which is the same instant, so Jan 3 must be excluded.
+    master = _event(
+        "evt-tzid", "Standup",
+        _dt(dateTime="2026-01-01T09:00:00+00:00"),
+        _dt(dateTime="2026-01-01T09:15:00+00:00"),
+        recurrence=["RRULE:FREQ=DAILY;COUNT=4", "EXDATE;TZID=Europe/Zurich:20260103T100000"],
+    )
+    occurrences = _project([master])
+    assert [o.occurrence_start for o in occurrences] == [
+        datetime(2026, 1, 1, 9, tzinfo=UTC),
+        datetime(2026, 1, 2, 9, tzinfo=UTC),
+        datetime(2026, 1, 4, 9, tzinfo=UTC),
+    ]

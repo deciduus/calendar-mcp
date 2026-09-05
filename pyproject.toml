@@ -15,6 +15,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "python-dateutil",
+    "tzdata",
     "mcp>=1.0,<2",
     "python-dotenv",
     "requests",
