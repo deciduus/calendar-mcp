@@ -59,7 +59,8 @@ if root_logger_for_reset.hasHandlers():
     for handler in root_logger_for_reset.handlers[:]: # Iterate over a copy
         root_logger_for_reset.removeHandler(handler)
         handler.close() # Close the handler properly
-    print("Log Reset: Removed existing handlers.") # Use print as logger not configured yet
+    # stderr, not stdout: stdout is the MCP protocol channel in stdio mode.
+    print("Log Reset: Removed existing handlers.", file=sys.stderr) # Use print as logger not configured yet
 # --- End Force Reset ---
 
 # Apply the configuration
@@ -90,15 +91,18 @@ def run_mcp_server():
     from src.mcp_bridge import create_mcp_server
     mcp = create_mcp_server()
     logger.info("Starting MCP server with stdio transport")
+    # os._exit skips atexit/handler flushing, so shut logging down explicitly first.
     try:
         mcp.run(transport='stdio')
     except Exception as e:
         logger.error(f"MCP server thread failed: {e}", exc_info=True)
-        # Handle the error appropriately, maybe signal the main thread
+        logging.shutdown()
+        os._exit(1)
 
     # mcp.run() returns when the client closes stdin; uvicorn.run() is still
     # blocking the main thread, so exit the whole process rather than linger.
     logger.info("MCP server stopped (stdin closed); exiting process")
+    logging.shutdown()
     os._exit(0)
 
 if __name__ == "__main__":

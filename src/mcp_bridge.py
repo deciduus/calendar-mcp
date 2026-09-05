@@ -18,9 +18,11 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Base URL for the FastAPI server
-HOST = os.getenv("HOST", "127.0.0.1")
+# HOST is the server's *bind* address (may be 0.0.0.0, which is not dialable), so
+# the bridge always dials a real address: MCP_API_HOST if set, else loopback.
+API_HOST = os.getenv("MCP_API_HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
-BASE_URL = f"http://{HOST}:{PORT}"
+BASE_URL = f"http://{API_HOST}:{PORT}"
 
 # --- Readiness gate -------------------------------------------------------
 # An MCP client can launch run_server.py and call a tool before uvicorn has
@@ -37,27 +39,30 @@ def wait_for_api(timeout: int = 30) -> bool:
     polling only ever happens on the first tool call.
     """
     global _ready
-    if _ready:
-        return True
-
+    # The lock only guards the cached flag; polling happens outside it so
+    # concurrent callers don't serialise into back-to-back timeouts.
     with _ready_lock:
         if _ready:
             return True
 
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                response = requests.get(f"{BASE_URL}/health", timeout=2)
-                if response.status_code == 200:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            response = requests.get(f"{BASE_URL}/health", timeout=2)
+            if response.status_code == 200:
+                with _ready_lock:
                     _ready = True
-                    logger.info(f"FastAPI server ready at {BASE_URL}")
-                    return True
-            except requests.RequestException:
-                pass
-            time.sleep(0.25)
+                logger.info(f"FastAPI server ready at {BASE_URL}")
+                return True
+        except requests.RequestException:
+            pass
+        with _ready_lock:
+            if _ready:  # another caller's poll succeeded meanwhile
+                return True
+        time.sleep(0.25)
 
-        logger.error(f"Timed out after {timeout}s waiting for {BASE_URL}/health")
-        return False
+    logger.error(f"Timed out after {timeout}s waiting for {BASE_URL}/health")
+    return False
 
 
 async def _call(method: str, path: str, expected_status: int = 200,

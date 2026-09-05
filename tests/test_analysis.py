@@ -3,11 +3,10 @@
 No network and no Google credentials: ``calendar_actions.find_events`` is
 patched with a stub returning hand-made responses.
 
-Note: ``analysis.py`` parses ``event.start.dateTime`` / ``event.start.date``
-with ``dateutil`` as if they were strings. The Pydantic models in
-``src/models.py`` coerce those fields to ``datetime``/``date`` objects, so the
-raw-string form is used for the logic tests here and the model-backed form is
-covered by the xfail tests at the bottom of this module.
+Note: ``analysis.py`` accepts both the raw ISO strings returned by the API and
+the ``datetime``/``date`` objects the Pydantic models in ``src/models.py``
+coerce them to. The raw-string form is used for the logic tests here; the
+model-backed form is covered at the bottom of this module.
 """
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -74,14 +73,6 @@ def _project(items, **kwargs):
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: project_recurring_events builds the ruleset with "
-           "rrule.rrulestr(..., forceset=True), which returns an rruleset, then passes "
-           "main_rule[0] (a datetime, not a rule) to ruleset.rrule(). Occurrence "
-           "generation therefore always raises and is swallowed, so no occurrence is "
-           "ever projected.",
-)
 def test_project_recurring_daily_rrule_honours_exdate():
     occurrences = _project([_daily_master(), _non_recurring()])
 
@@ -99,20 +90,29 @@ def test_project_recurring_daily_rrule_honours_exdate():
     assert occurrences[0].occurrence_end == datetime(2026, 1, 1, 9, 15, tzinfo=UTC)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: project_recurring_events builds the ruleset with "
-           "rrule.rrulestr(..., forceset=True), which returns an rruleset, then passes "
-           "main_rule[0] (a datetime, not a rule) to ruleset.rrule(). Occurrence "
-           "generation therefore always raises and is swallowed, so no occurrence is "
-           "ever projected.",
-)
 def test_project_recurring_weekly_rrule_clipped_to_window():
     occurrences = _project([_weekly_master()], time_max=datetime(2026, 1, 12, tzinfo=UTC))
     assert [o.occurrence_start for o in occurrences] == [
         datetime(2026, 1, 1, 14, tzinfo=UTC),
         datetime(2026, 1, 8, 14, tzinfo=UTC),
     ]
+
+
+def test_project_recurring_all_day_event():
+    all_day = _event(
+        "evt-allday", "Sprint day",
+        _dt(date="2026-01-01"), _dt(date="2026-01-02"),
+        recurrence=["RRULE:FREQ=DAILY;COUNT=3"],
+    )
+    occurrences = _project([all_day])
+    # All-day occurrences start at midnight, adopt the window's timezone and
+    # last a whole day.
+    assert [o.occurrence_start for o in occurrences] == [
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 2, tzinfo=UTC),
+        datetime(2026, 1, 3, tzinfo=UTC),
+    ]
+    assert occurrences[0].occurrence_end == datetime(2026, 1, 2, tzinfo=UTC)
 
 
 def test_project_recurring_returns_empty_when_no_events():
@@ -178,7 +178,7 @@ def test_analyze_busyness_is_keyed_by_date_objects():
     assert all(isinstance(k, date) for k in _analyze([TIMED]))
 
 
-# --- Known bugs ---------------------------------------------------------------
+# --- Pydantic-model inputs and real find_events signature ---------------------------------------------------------------
 
 MODEL_EVENT = {
     "id": "e1",
@@ -188,13 +188,6 @@ MODEL_EVENT = {
 }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: analysis.py feeds event.start.dateTime/date to dateutil.parse/isoparse, "
-           "but src.models coerces those fields to datetime/date objects. dateutil raises "
-           "TypeError (only ValueError is caught), so both analysis functions blow up on "
-           "the real EventsResponse returned by calendar_actions.find_events.",
-)
 def test_analysis_accepts_pydantic_event_models():
     response = EventsResponse(items=[MODEL_EVENT])
     with patch.object(analysis.calendar_actions, "find_events", MagicMock(return_value=response)):
@@ -206,11 +199,6 @@ def test_analysis_accepts_pydantic_event_models():
     assert result == {date(2026, 1, 1): {"event_count": 1, "total_duration_minutes": 90.0}}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: project_recurring_events calls calendar_actions.find_events(q=...), but that "
-           "function's parameter is named 'query' -> TypeError against the real signature.",
-)
 def test_project_recurring_matches_real_find_events_signature():
     with patch.object(analysis.calendar_actions, "find_events", autospec=True) as mocked:
         mocked.return_value = EventsResponse(items=[])

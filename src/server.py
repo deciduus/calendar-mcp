@@ -711,6 +711,6 @@ if __name__ == "__main__":
     # Note: Startup logic runs automatically with uvicorn via the lifespan handler
     uvicorn.run(
         app,
-        host=os.getenv("HOST", "0.0.0.0"),
+        host=os.getenv("HOST", "127.0.0.1"),
         port=int(os.getenv("PORT", "8000"))
     )

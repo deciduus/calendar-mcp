@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "calendar-mcp"
 version = "0.2.0"
@@ -16,6 +20,11 @@ dependencies = [
     "requests",
     "pydantic[email]",
 ]
+
+[tool.setuptools]
+# Explicit: without this, auto-discovery treats src/ as a src-layout root and
+# exposes server/auth/... as top-level modules instead of src.*.
+packages = ["src"]
 
 [project.optional-dependencies]
 dev = [

@@ -76,7 +76,7 @@ This project implements a Python-based MCP (Model Context Protocol) server that 
         # PORT=8000
         # RELOAD=false
         ```
-    *   The server settings are optional and default to `HOST=127.0.0.1`, `PORT=8000` and `RELOAD=false`. `PORT` is also the port the MCP bridge uses to reach the FastAPI server, and `RELOAD` enables uvicorn auto-reload for development.
+    *   The server settings are optional and default to `HOST=127.0.0.1`, `PORT=8000` and `RELOAD=false`. `HOST` is the bind address; the MCP bridge reaches the FastAPI server at `MCP_API_HOST` (default `127.0.0.1`) and `PORT`, so set `MCP_API_HOST` if you bind to `0.0.0.0`. `RELOAD` enables uvicorn auto-reload for development.
     *   Ensure `TOKEN_FILE_PATH` points to a location where the app can write the token file (the default `.gcp-saved-tokens.json` in the root is usually fine). This file is automatically added to `.gitignore`.
 
 5.  **Install Dependencies:**
