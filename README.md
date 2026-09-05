@@ -161,3 +161,6 @@ This project is dual-licensed to support both open-source collaboration and sust
     *   Please contact **deciduusleaf@gmail.com** for inquiries regarding commercial licensing options.
 
 By using, modifying, or distributing this software, you agree to be bound by the terms of either the AGPLv3 or a separately negotiated commercial license.
+
+<!-- MCP Registry ownership marker; do not remove -->
+mcp-name: io.github.deciduus/calendar-mcp

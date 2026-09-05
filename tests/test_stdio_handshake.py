@@ -81,7 +81,7 @@ async def test_stdio_subprocess_handshake_lists_all_tools():
         pytest.skip(f"Could not spawn the stdio server subprocess: {exc}")
 
     assert init.server_info.name == "calendar-mcp"
-    assert init.server_info.version == "1.0.0"
+    assert init.server_info.version == "1.0.1"
     assert init.instructions
 
     names = {tool.name for tool in listing.tools}

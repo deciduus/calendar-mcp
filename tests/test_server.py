@@ -149,7 +149,7 @@ async def test_tool_annotations_classify_reads_writes_and_deletes():
 
 async def test_server_identity_and_instructions():
     assert server_module.server.name == "calendar-mcp"
-    assert server_module.SERVER_VERSION == "1.0.0"
+    assert server_module.SERVER_VERSION == "1.0.1"
     assert "calendar_id" in server_module.INSTRUCTIONS
 
 

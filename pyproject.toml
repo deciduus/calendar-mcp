@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "calendar-mcp-server"
-version = "1.0.0"
+version = "1.0.1"
 description = "A single-process MCP server that gives LLM clients read and write access to Google Calendar."
 readme = "README.md"
 requires-python = ">=3.10"

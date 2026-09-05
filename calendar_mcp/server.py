@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 SERVER_NAME = "calendar-mcp"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.0.1"
 
 INSTRUCTIONS = """\
 Read and manage the user's Google Calendar.

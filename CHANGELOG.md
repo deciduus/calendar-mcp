@@ -3,6 +3,10 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-05
+
+- Add the MCP Registry ownership marker (`mcp-name`) to the README so the package can be listed at registry.modelcontextprotocol.io.
+
 ## [1.0.0]
 
 Full rewrite onto the MCP 2.x SDK as a single process. FastAPI, uvicorn and the
