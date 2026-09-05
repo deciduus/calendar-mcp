@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
+from zoneinfo import ZoneInfo
 
 from google.oauth2.credentials import Credentials
 from dateutil import rrule
@@ -21,6 +22,29 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _as_datetime(value) -> datetime:
+    """Coerce an API/model start-or-end value into a ``datetime``.
+
+    ``src.models`` already coerces ``dateTime``/``date`` fields to
+    ``datetime``/``date`` objects, but the raw API returns ISO strings, so both
+    forms must be accepted. A plain ``date`` becomes midnight of that day.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    return date_parser.isoparse(value)
+
+
+def _match_tz(value: datetime, reference: datetime) -> datetime:
+    """Make *value* tz-aware/naive to match *reference* so they stay comparable."""
+    if reference.tzinfo is not None and value.tzinfo is None:
+        return value.replace(tzinfo=reference.tzinfo)
+    if reference.tzinfo is None and value.tzinfo is not None:
+        return value.replace(tzinfo=None)
+    return value
 
 # Define a structure for projected occurrences (can be a TypedDict or Pydantic model later)
 class ProjectedEventOccurrence:
@@ -67,7 +91,7 @@ def project_recurring_events(
         credentials=credentials,
         calendar_id=calendar_id,
         # timeMax=time_max, # Find masters that haven't ended before our window
-        q=event_query,
+        query=event_query,
         single_events=False, # Crucial: Get the master event definition
         showDeleted=False,
         max_results=2500 # Adjust as needed, API max is 2500
@@ -96,10 +120,9 @@ def project_recurring_events(
 
         if event.start.dateTime:
             try:
-                # Use dateutil parser for robust ISO parsing
-                dtstart_obj = date_parser.isoparse(event.start.dateTime)
+                dtstart_obj = _as_datetime(event.start.dateTime)
                 if event.end and event.end.dateTime:
-                    dtend_obj = date_parser.isoparse(event.end.dateTime)
+                    dtend_obj = _as_datetime(event.end.dateTime)
                     event_duration = dtend_obj - dtstart_obj
                 else:
                     # Default duration for dateTime events if end is missing (e.g., 1 hour)
@@ -111,7 +134,7 @@ def project_recurring_events(
         elif event.start.date:
             try:
                 # All-day event - parse date and set time to midnight
-                start_date = date_parser.parse(event.start.date).date()
+                start_date = _as_datetime(event.start.date).date()
                 # Make dtstart timezone-aware if time_min is, otherwise naive UTC
                 dtstart_obj = datetime.combine(start_date, datetime.min.time())
                 if time_min.tzinfo:
@@ -122,7 +145,7 @@ def project_recurring_events(
 
                 # Duration for all-day events is typically 1 day
                 if event.end and event.end.date:
-                    end_date = date_parser.parse(event.end.date).date()
+                    end_date = _as_datetime(event.end.date).date()
                     event_duration = end_date - start_date # This includes the start day but excludes the end day
                 else:
                     event_duration = timedelta(days=1) # Assume single all-day event
@@ -156,91 +179,64 @@ def project_recurring_events(
             # Parse the main recurrence rule
             # Pass dtstart, which is essential for rrule calculations
             ruleset = rrule.rruleset()
-            # Use rrulestr which handles RRULE and dtstart implicitly if not provided otherwise
-            # We need to make sure the timezone handling matches dtstart_obj
-            main_rule = rrule.rrulestr(rrule_str, dtstart=dtstart_obj, forceset=True) # forceset=True to handle COUNT/UNTIL easily
-            ruleset.rrule(main_rule[0]) # Add the parsed rule to the set
+            # rrulestr without forceset returns a single rrule bound to dtstart,
+            # which is what rruleset.rrule() expects.
+            ruleset.rrule(rrule.rrulestr(rrule_str, dtstart=dtstart_obj))
 
-            # Add exception dates (EXDATE)
-            for exdate_str in exdate_strs:
-                # EXDATE format: "EXDATE;TZID=Europe/Zurich:20110426T080000,20110428T080000"
-                # Or "EXDATE:20240101" (all-day)
-                # Or "EXDATE:20240101T100000Z" (UTC)
-                # dateutil.rrule.rrulestr can parse EXDATE directly if part of the string,
-                # but Google separates them. We need to parse dates/datetimes manually.
-                # Split by ':' and then by ','
-                parts = exdate_str.split(':', 1)
-                if len(parts) == 2:
-                    param_str, dates_str = parts
-                    dates = dates_str.split(',')
-                    params = {}
-                    if ';' in param_str: # Check for TZID or VALUE=DATE
-                       param_parts = param_str.split(';')[1:] # Skip EXDATE itself
-                       for part in param_parts:
-                           if '=' in part:
-                               key, value = part.split('=', 1)
-                               params[key.upper()] = value
-
-                    is_all_day = params.get('VALUE') == 'DATE'
-                    tz_id = params.get('TZID')
-                    # TODO: Handle TZID properly using pytz if needed
-
-                    for date_str in dates:
+            # Add exception (EXDATE) and explicit (RDATE) dates.
+            # Format: "EXDATE;TZID=Europe/Zurich:20110426T080000,20110428T080000",
+            # "EXDATE:20240101T100000Z" (UTC) or "EXDATE;VALUE=DATE:20240101" (all-day).
+            for prop_str, add in [(s, ruleset.exdate) for s in exdate_strs] + \
+                                 [(s, ruleset.rdate) for s in rdate_strs]:
+                parts = prop_str.split(':', 1)
+                if len(parts) != 2:
+                    continue
+                # Resolve an explicit TZID param (e.g. "EXDATE;TZID=Europe/Zurich:...");
+                # values without one are assumed to be in dtstart's timezone.
+                prop_tz = None
+                for param in parts[0].split(';')[1:]:
+                    if param.upper().startswith('TZID='):
                         try:
-                            if is_all_day:
-                                ex_date = date_parser.parse(date_str).date()
-                                # Create datetime at midnight for comparison/ruleset
-                                ex_dt = datetime.combine(ex_date, datetime.min.time())
-                                if dtstart_obj.tzinfo: # Match tzinfo
-                                    ex_dt = ex_dt.replace(tzinfo=dtstart_obj.tzinfo)
-                            else:
-                                ex_dt = date_parser.isoparse(date_str)
-                                # TODO: Apply TZID if present
-
-                            ruleset.exdate(ex_dt)
-                        except ValueError:
-                            logger.warning(f"Could not parse EXDATE value '{date_str}' for event {event.id}")
-
-            # Add explicit recurrence dates (RDATE) - Less common?
-            # Similar parsing logic as EXDATE if needed.
-            # for rdate_str in rdate_strs: ... ruleset.rdate(...)
+                            prop_tz = ZoneInfo(param[5:])
+                        except Exception:
+                            logger.warning(f"Unknown TZID '{param[5:]}' for event {event.id}; assuming dtstart tz")
+                for date_str in parts[1].split(','):
+                    try:
+                        # isoparse handles both "20240101" and "20240101T100000Z".
+                        parsed = date_parser.isoparse(date_str.strip())
+                        if prop_tz is not None and parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=prop_tz)
+                        add(_match_tz(parsed, dtstart_obj))
+                    except ValueError:
+                        logger.warning(f"Could not parse '{prop_str[:6]}' value '{date_str}' for event {event.id}")
 
             # Generate occurrences within the desired window [time_min, time_max)
-            # Note: rruleset.between includes dates equal to dtstart/until
-            occurrences = ruleset.between(time_min, time_max, inc=True) # inc=True includes time_min
+            window_min = _match_tz(time_min, dtstart_obj)
+            window_max = _match_tz(time_max, dtstart_obj)
+            occurrences = [
+                occ for occ in ruleset.between(window_min, window_max, inc=True)
+                if occ < window_max
+            ]
 
             logger.debug(f"Event '{event.summary}' ({event.id}): Found {len(occurrences)} occurrences via rrule.")
 
             for occ_start_dt in occurrences:
-                 # Ensure timezone consistency if needed
-                 if dtstart_obj.tzinfo and occ_start_dt.tzinfo is None:
-                      occ_start_dt = occ_start_dt.replace(tzinfo=dtstart_obj.tzinfo)
-                 elif not dtstart_obj.tzinfo and occ_start_dt.tzinfo:
-                      occ_start_dt = occ_start_dt.replace(tzinfo=None)
-
-                 # Calculate occurrence end time
-                 occ_end_dt = occ_start_dt + event_duration
-
-                 # Double check if the occurrence actually overlaps the window
-                 # ruleset.between should handle this, but an extra check might be useful
-                 # if occ_start_dt < time_max and occ_end_dt > time_min:
-                 projected_occurrences.append(
-                      ProjectedEventOccurrence(
-                           original_event_id=event.id,
-                           original_summary=event.summary or "No Summary",
-                           occurrence_start=occ_start_dt,
-                           occurrence_end=occ_end_dt
-                      )
-                 )
+                projected_occurrences.append(
+                    ProjectedEventOccurrence(
+                        original_event_id=event.id,
+                        original_summary=event.summary or "No Summary",
+                        occurrence_start=occ_start_dt,
+                        occurrence_end=occ_start_dt + event_duration,
+                    )
+                )
 
         except Exception as e:
             logger.error(f"Failed to parse/process recurrence for event '{event.summary}' ({event.id}): {e}", exc_info=True)
             continue # Skip this event
 
     logger.info(f"Finished projection. Found {len(projected_occurrences)} total occurrences.")
-    # Sort occurrences chronologically?
     projected_occurrences.sort(key=lambda x: x.occurrence_start)
-    return projected_occurrences 
+    return projected_occurrences
 
 
 def analyze_busyness(
@@ -293,12 +289,12 @@ def analyze_busyness(
         if event.start:
             if event.start.dateTime:
                 try:
-                    start_dt = date_parser.isoparse(event.start.dateTime)
+                    start_dt = _as_datetime(event.start.dateTime)
                     event_date = start_dt.date()
                 except ValueError: logger.warning(f"Could not parse start dateTime: {event.start.dateTime}"); continue
             elif event.start.date:
                 try:
-                    event_date = date_parser.parse(event.start.date).date()
+                    event_date = _as_datetime(event.start.date).date()
                     # All-day events don't have a specific duration from start/end times typically
                 except ValueError: logger.warning(f"Could not parse start date: {event.start.date}"); continue
 
@@ -320,7 +316,7 @@ def analyze_busyness(
         # Calculate duration for non-all-day events
         if start_dt and event.end and event.end.dateTime:
             try:
-                end_dt = date_parser.isoparse(event.end.dateTime)
+                end_dt = _as_datetime(event.end.dateTime)
                 duration = end_dt - start_dt
                 # Add duration in minutes, handle potential negative duration if times are swapped?
                 busyness_by_date[event_date]['total_duration_minutes'] += max(0, duration.total_seconds() / 60.0)

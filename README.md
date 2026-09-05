@@ -6,22 +6,22 @@ This project implements a Python-based MCP (Model Context Protocol) server that 
 
 *   **Authentication:** Secure Google Calendar API access using OAuth 2.0 (Desktop App Flow with automatic token storage/refresh).
 *   **Core Calendar Actions:**
-    *   List calendars (`mcp_google_calendar_list_calendars`).
-    *   Create calendars (`mcp_google_calendar_create_calendar`).
-    *   Find events with basic and advanced filtering (`mcp_google_calendar_find_events`).
-    *   Create detailed events (`mcp_google_calendar_create_event`).
-    *   Quick-add events from text (`mcp_google_calendar_quick_add_event`).
-    *   Update events (`mcp_google_calendar_update_event`).
-    *   Delete events (`mcp_google_calendar_delete_event`).
-    *   Add attendees to events (`mcp_google_calendar_add_attendee`).
+    *   List calendars (`list_calendars`).
+    *   Create calendars (`create_calendar`).
+    *   Find events with basic and advanced filtering (`find_events`).
+    *   Create detailed events (`create_event`).
+    *   Quick-add events from text (`quick_add_event`).
+    *   Update events (`update_event`).
+    *   Delete events (`delete_event`).
+    *   Add attendees to events (`add_attendee`).
 *   **Advanced Scheduling & Analysis:**
-    *   Check attendee response status (`mcp_google_calendar_check_attendee_status`).
-    *   Query free/busy information for multiple calendars (`mcp_google_calendar_query_free_busy`).
-    *   Find mutual free slots and schedule meetings automatically (`mcp_google_calendar_schedule_mutual`).
-    *   Analyze daily event counts and durations (`mcp_google_calendar_analyze_busyness`).
+    *   Check attendee response status (`check_attendee_status`).
+    *   Query free/busy information for multiple calendars (`query_free_busy`).
+    *   Find mutual free slots and schedule meetings automatically (`schedule_mutual`).
+    *   Analyze daily event counts and durations (`analyze_busyness`).
     *   *(Recurring event projection feature potentially added in Task 3.5, but not explicitly exposed as a tool yet)*
 *   **Server:** FastAPI-based server exposing actions via a RESTful API.
-*   **MCP Integration:** Provides MCP-compatible tools via stdio using the `mcp_sdk` library.
+*   **MCP Integration:** Provides MCP-compatible tools via stdio using the `mcp` library (`mcp.server.fastmcp.FastMCP`).
 
 ## Setup
 
@@ -50,11 +50,10 @@ This project implements a Python-based MCP (Model Context Protocol) server that 
         *   Add Scopes: Click "Add or Remove Scopes", search for `calendar`, add the `.../auth/calendar` scope (read/write access). Click "Update".
         *   Add Test Users: Add the Google Account email address(es) you will authenticate with.
         *   Save and return to the dashboard.
-    *   Go back to "APIs & Services" > "Credentials" and click on the name of the Desktop App credential you created.
-    *   Under "Authorized redirect URIs", click "+ ADD URI" and enter `http://localhost:8080/oauth2callback`. Click "Save". (Adjust the port if you change `OAUTH_CALLBACK_PORT` in `.env`).
+    *   Note: a **Desktop app** client has no "Authorized redirect URIs" field, so there is nothing to add there - Google allows `http://localhost` redirects on any port for this client type automatically, which is what the local OAuth callback on `OAUTH_CALLBACK_PORT` uses.
 
 4.  **Environment Configuration (`.env` file):**
-    *   In the project's root directory, copy the `env.example` file and rename the copy to `.env`.
+    *   In the project's root directory, copy the `example.env` file and rename the copy to `.env`.
     *   Open the `.env` file and paste your **Client ID** and **Client Secret** obtained from Google Cloud:
         ```dotenv
         # Google OAuth 2.0 Client Credentials (from Google Cloud Console - Desktop app type)
@@ -71,7 +70,13 @@ This project implements a Python-based MCP (Model Context Protocol) server that 
         # Google Calendar API Scopes (read/write is default)
         # Use 'https://www.googleapis.com/auth/calendar.readonly' for read-only access
         CALENDAR_SCOPES='https://www.googleapis.com/auth/calendar'
+
+        # FastAPI server settings (all optional)
+        # HOST=127.0.0.1
+        # PORT=8000
+        # RELOAD=false
         ```
+    *   The server settings are optional and default to `HOST=127.0.0.1`, `PORT=8000` and `RELOAD=false`. `HOST` is the bind address; the MCP bridge reaches the FastAPI server at `MCP_API_HOST` (default `127.0.0.1`) and `PORT`, so set `MCP_API_HOST` if you bind to `0.0.0.0`. `RELOAD` enables uvicorn auto-reload for development.
     *   Ensure `TOKEN_FILE_PATH` points to a location where the app can write the token file (the default `.gcp-saved-tokens.json` in the root is usually fine). This file is automatically added to `.gitignore`.
 
 5.  **Install Dependencies:**
@@ -112,7 +117,7 @@ To use this server as a tool within an MCP client, you need to configure the cli
 
 ```json
 {
-  "tools": {
+  "mcpServers": {
     "google_calendar": {
       "command": "python",
       "args": [
@@ -128,6 +133,7 @@ To use this server as a tool within an MCP client, you need to configure the cli
 *   **`google_calendar`:** A unique name you choose for this tool instance within your MCP client.
 *   **`command`:** Set this to `python` if it's in your system's PATH. If not, provide the *full absolute path* to the `python.exe` or `python` executable (e.g., `/path/to/your/venv/bin/python` or `C:/path/to/your/venv/Scripts/python.exe`).
 *   **`args`:** Provide the *full, absolute path* to the `run_server.py` script in your project directory. **Replace the placeholder `/path/to/your/calendar-mcp/run_server.py` with the actual path on your system.**
+*   **Note:** MCP mode is only started when stdin is *not* a TTY - i.e. the client must launch the server with its stdin connected to a pipe (which MCP clients do). Running `python run_server.py` in an interactive terminal starts the HTTP server only.
 *   **(Optional) `api`:** Some clients might still need the `api` field to point to the underlying FastAPI server (e.g., `"api": "http://localhost:8000"`) for schema discovery, even though communication happens via stdio.
 *   **(Optional) `timeout`:** You can add a timeout (e.g., `"timeout": 30000` for 30 seconds).
 
@@ -146,9 +152,13 @@ To use this server as a tool within an MCP client, you need to configure the cli
     *   `src/analysis.py`: Advanced analysis functions.
     *   `src/auth.py`: Handles OAuth 2.0 authentication flow and token management.
     *   `src/models.py`: Pydantic models for request/response data structures.
-    *   `src/mcp_bridge.py`: Implements the MCP tool definitions using `mcp_sdk`, delegating to the FastAPI server.
+    *   `src/mcp_bridge.py`: Implements the MCP tool definitions using `mcp`, delegating to the FastAPI server.
 *   **Logging:** Logs are written to `calendar_mcp.log` in the project root.
-*   **Testing:** (Details TBD)
+*   **Testing:** Install the development dependencies and run the test suite from the project root:
+    ```bash
+    pip install -e ".[dev]"
+    pytest
+    ```
 *   **Contributing:** (Details TBD)
 
 ## Next Steps (Planned Tasks)
