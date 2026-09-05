@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.deciduus/calendar-mcp",
+  "description": "MCP server for Google Calendar: list calendars, find, create, update, move and delete events, check attendee status, query free/busy, and analyse busyness.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/deciduus/calendar-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "calendar-mcp-server",
+      "version": "1.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GOOGLE_CLIENT_ID",
+          "description": "OAuth 2.0 client ID for a Google Cloud project with the Google Calendar API enabled.",
+          "isRequired": true
+        },
+        {
+          "name": "GOOGLE_CLIENT_SECRET",
+          "description": "OAuth 2.0 client secret matching GOOGLE_CLIENT_ID.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "TOKEN_FILE_PATH",
+          "description": "Path to the saved OAuth token file written by 'calendar-mcp auth'.",
+          "default": ".gcp-saved-tokens.json"
+        }
+      ]
+    }
+  ]
+}

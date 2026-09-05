@@ -3,33 +3,52 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "calendar-mcp"
-version = "0.2.0"
-description = "MCP server exposing Google Calendar to LLM clients."
+name = "calendar-mcp-server"
+version = "1.0.0"
+description = "A single-process MCP server that gives LLM clients read and write access to Google Calendar."
+readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0"
+keywords = ["mcp", "google-calendar", "model-context-protocol"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Scheduling",
+]
 dependencies = [
+    "mcp>=2,<3",
     "google-api-python-client",
     "google-auth-oauthlib",
     "google-auth-httplib2",
-    "fastapi",
-    "uvicorn[standard]",
     "python-dateutil",
-    "tzdata",
-    "mcp>=1.0,<2",
+    "pydantic[email]>=2",
     "python-dotenv",
     "requests",
-    "pydantic[email]",
+    "tzdata",
 ]
-
-[tool.setuptools]
-# Explicit: without this, auto-discovery treats src/ as a src-layout root and
-# exposes server/auth/... as top-level modules instead of src.*.
-packages = ["src"]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
     "pytest-asyncio",
-    "httpx",
+    "anyio",
 ]
+
+[project.scripts]
+calendar-mcp = "calendar_mcp.cli:main"
+# Alias so `uvx calendar-mcp-server` works: uvx looks for an executable
+# named after the distribution unless you pass --from.
+calendar-mcp-server = "calendar_mcp.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/deciduus/calendar-mcp"
+Repository = "https://github.com/deciduus/calendar-mcp"
+
+[tool.setuptools]
+packages = ["calendar_mcp"]

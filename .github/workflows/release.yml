@@ -1,0 +1,63 @@
+# Release to PyPI on a v* tag, using PyPI Trusted Publishing (OIDC) - no API tokens.
+#
+# ONE-TIME MAINTAINER SETUP (before the first tag is pushed):
+#   1. Sign in at https://pypi.org and go to
+#      https://pypi.org/manage/account/publishing
+#   2. Add a "pending publisher" for a project that does not exist yet:
+#        PyPI Project Name : calendar-mcp-server
+#        Owner             : deciduus
+#        Repository name   : calendar-mcp
+#        Workflow name     : release.yml
+#        Environment name  : pypi
+#   3. In this GitHub repo, create the environment named "pypi"
+#      (Settings -> Environments -> New environment). Optionally add
+#      required reviewers so releases need a manual approval.
+#   4. Push a tag to release:  git tag v1.0.0 && git push origin v1.0.0
+#      (the tag must match the version in pyproject.toml)
+#
+# After the first successful publish the pending publisher becomes a normal
+# trusted publisher for the project; no further setup is needed.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Check distribution metadata
+        run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

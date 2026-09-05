@@ -1,11 +1,6 @@
-google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
-fastapi
-uvicorn[standard]
-python-dateutil
-tzdata
-mcp>=1.0,<2
-python-dotenv
-requests
-pydantic[email]
+# The package itself is the source of truth for dependencies (pyproject.toml).
+# Installing it editable pulls in everything calendar-mcp needs.
+-e .
+
+# Test/development extras:
+#   pip install -e ".[dev]"

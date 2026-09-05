@@ -52,7 +52,7 @@ coverage.xml
 
 # Environments
 .env
-.venv
+.venv*/
 env/
 venv/
 ENV/
@@ -99,6 +99,7 @@ gcp-oauth.keys.json
 
 # Project specific ignores
 calendar_mcp.log
+calendar-mcp.log
 openapi_response.json
 task-list.mdc
 TASKS.md

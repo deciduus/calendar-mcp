@@ -8,17 +8,9 @@ from google.oauth2.credentials import Credentials
 from dateutil import rrule
 from dateutil import parser as date_parser # Alias to avoid confusion with our parser module if any
 
-# Import find_events from the sibling module
-try:
-    # Use absolute imports for consistency
-    import src.calendar_actions as calendar_actions  # Changed from .calendar_actions for compatibility
-    from src.models import GoogleCalendarEvent        # Changed from .models for compatibility
-except ImportError:
-    # Handle potential path issues if run directly or structured differently
-    logging.error("Could not import from src.calendar_actions or src.models. Ensure structure is correct.")
-    # Define dummy functions/classes for type hinting if needed, or re-raise
-    def find_events(*args, **kwargs): return None
-    class GoogleCalendarEvent: pass
+# Sibling modules within the package.
+from . import calendar_actions
+from .models import GoogleCalendarEvent
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +19,7 @@ logger = logging.getLogger(__name__)
 def _as_datetime(value) -> datetime:
     """Coerce an API/model start-or-end value into a ``datetime``.
 
-    ``src.models`` already coerces ``dateTime``/``date`` fields to
+    ``calendar_mcp.models`` already coerces ``dateTime``/``date`` fields to
     ``datetime``/``date`` objects, but the raw API returns ISO strings, so both
     forms must be accepted. A plain ``date`` becomes midnight of that day.
     """

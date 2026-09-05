@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, date, timedelta, time, timezone
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, TYPE_CHECKING
 from dateutil import parser # For robust datetime parsing
 import json
 
@@ -19,15 +19,10 @@ from .models import (
     CalendarListEntry
 )
 
-# Import analysis functions
-try:
-    from .analysis import project_recurring_events, ProjectedEventOccurrence, analyze_busyness
-except ImportError:
-    logging.error("Could not import from .analysis. Ensure structure is correct.")
-    # Define dummies for type hinting
-    def project_recurring_events(*args, **kwargs): return []
-    def analyze_busyness(*args, **kwargs): return None # Added dummy
-    class ProjectedEventOccurrence: pass
+# ``analysis`` imports this module back, so it is imported lazily inside the two
+# wrapper functions that need it rather than at module scope.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .analysis import ProjectedEventOccurrence
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +128,7 @@ def find_events(
             logger.error(f"Google API error details (find_events): {error.resp.status} - {error_content}")
         except Exception:
             logger.error(f"Google API error details (find_events): {error.resp.status} - Could not decode error content.")
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while finding events: {e}", exc_info=True)
         return None
@@ -247,7 +242,7 @@ def create_event(
         except Exception:
             pass # Keep default message if decoding fails
         logger.error(f"Google API error while creating event: {error.resp.status} - {error_content}", exc_info=True) 
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while creating event: {e}", exc_info=True)
         return None
@@ -296,7 +291,7 @@ def quick_add_event(
             logger.error(f"Google API error details (quick_add): {error.resp.status} - {error_content}")
         except Exception:
             logger.error(f"Google API error details (quick_add): {error.resp.status} - Could not decode error content.")
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred during quick add: {e}", exc_info=True)
         return None
@@ -387,7 +382,7 @@ def update_event(
             return GoogleCalendarEvent(**existing_event)
         except HttpError as e:
             logger.error(f"Failed to retrieve event {event_id} after empty update request: {e}")
-            return None
+            raise
 
     logger.info(f"Updating event '{event_id}' in calendar '{calendar_id}'.")
     logger.debug(f"Update body for patch: {update_body}")
@@ -418,7 +413,7 @@ def update_event(
             except Exception:
                 pass
             logger.error(f"Google API error while updating event '{event_id}': {error.resp.status} - {error_content}", exc_info=True)
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while updating event '{event_id}': {e}", exc_info=True)
         return None
@@ -468,7 +463,7 @@ def delete_event(
             except Exception:
                 pass
             logger.error(f"Google API error while deleting event '{event_id}': {error.resp.status} - {error_content}", exc_info=True)
-        return False
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while deleting event '{event_id}': {e}", exc_info=True)
         return False
@@ -515,7 +510,7 @@ def add_attendee(
             except Exception:
                 pass
             logger.error(f"Google API error retrieving event '{event_id}' for adding attendees: {error.resp.status} - {error_content}", exc_info=True)
-        return None
+        raise
     except Exception as e:
         logger.error(f"Unexpected error retrieving event '{event_id}': {e}", exc_info=True)
         return None
@@ -571,7 +566,7 @@ def add_attendee(
         except Exception:
             pass
         logger.error(f"Google API error occurred while patching event '{event_id}' with new attendees: {error.resp.status} - {error_content}", exc_info=True)
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while patching event '{event_id}' with new attendees: {e}", exc_info=True)
         return None
@@ -616,7 +611,7 @@ def find_calendars(
             logger.error(f"Google API error details (find_calendars): {error.resp.status} - {error_content}")
         except Exception:
             logger.error(f"Google API error details (find_calendars): {error.resp.status} - Could not decode error content.")
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while fetching calendar list: {e}", exc_info=True)
         return None
@@ -663,7 +658,7 @@ def create_calendar(
         except Exception:
             pass
         logger.error(f"Google API error occurred while creating calendar '{summary}': {error.resp.status} - {error_content}", exc_info=True)
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred while creating calendar '{summary}': {e}", exc_info=True)
         return None
@@ -709,7 +704,7 @@ def check_attendee_status(
             except Exception:
                 pass
             logger.error(f"Google API error retrieving event '{event_id}' for status check: {error.resp.status} - {error_content}", exc_info=True)
-        return None
+        raise
     except Exception as e:
         logger.error(f"Unexpected error retrieving event '{event_id}': {e}", exc_info=True)
         return None
@@ -820,7 +815,7 @@ def find_availability(
         except Exception:
             pass
         logger.error(f"Google API error occurred during free/busy query: {error.resp.status} - {error_content}", exc_info=True)
-        return None
+        raise
     except Exception as e:
         logger.error(f"An unexpected error occurred during free/busy query: {e}", exc_info=True)
         return None
@@ -1093,7 +1088,7 @@ def get_projected_recurring_events(
     time_max: datetime,
     calendar_id: str = 'primary',
     event_query: Optional[str] = None
-) -> List[ProjectedEventOccurrence]:
+) -> List["ProjectedEventOccurrence"]:
     """Wrapper function to find recurring events and project their occurrences.
 
     This calls the core logic in the analysis module.
@@ -1108,8 +1103,9 @@ def get_projected_recurring_events(
     Returns:
         A list of ProjectedEventOccurrence objects representing calculated occurrences.
     """
+    from .analysis import project_recurring_events  # local: analysis imports this module
+
     logger.info(f"Action: get_projected_recurring_events called for calendar '{calendar_id}'")
-    # Directly call the analysis function
     return project_recurring_events(
         credentials=credentials,
         time_min=time_min,
@@ -1137,9 +1133,9 @@ def get_busyness_analysis(
     Returns:
         A dictionary mapping each date to its busyness stats, or None on error.
     """
+    from .analysis import analyze_busyness  # local: analysis imports this module
+
     logger.info(f"Action: get_busyness_analysis called for calendar '{calendar_id}'")
-    # Directly call the analysis function
-    # Add error handling if analyze_busyness itself can raise specific exceptions
     try:
         return analyze_busyness(
             credentials=credentials,
@@ -1153,3 +1149,257 @@ def get_busyness_analysis(
         return None # Return None to signal error to the server endpoint
 
 # --- Add other action functions below (create_calendar) --- 
+
+# --- Event mutation helpers added for the v1 MCP server ---
+
+def get_event(
+    credentials: Credentials,
+    event_id: str,
+    calendar_id: str = 'primary',
+) -> Optional[GoogleCalendarEvent]:
+    """Fetches a single event by ID.
+
+    Args:
+        credentials: Valid Google OAuth2 credentials.
+        event_id: The ID of the event to fetch.
+        calendar_id: Calendar identifier.
+
+    Returns:
+        A GoogleCalendarEvent, or None if the response could not be parsed.
+
+    Raises:
+        HttpError: If the Google Calendar API rejects the request.
+    """
+    service = _get_calendar_service(credentials)
+    try:
+        raw = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        return GoogleCalendarEvent(**raw)
+    except HttpError as error:
+        logger.error(
+            f"Google API error retrieving event '{event_id}' from '{calendar_id}': "
+            f"{getattr(error.resp, 'status', '?')}",
+            exc_info=True,
+        )
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving event '{event_id}': {e}", exc_info=True)
+        return None
+
+
+def _event_duration(raw_event: Dict[str, Any]) -> Optional[timedelta]:
+    """Returns the wall-clock duration of a raw API event, if both ends are timed."""
+    start = (raw_event.get('start') or {}).get('dateTime')
+    end = (raw_event.get('end') or {}).get('dateTime')
+    if not start or not end:
+        return None
+    try:
+        return parser.isoparse(end) - parser.isoparse(start)
+    except (ValueError, TypeError):
+        return None
+
+
+def move_event(
+    credentials: Credentials,
+    event_id: str,
+    calendar_id: str = 'primary',
+    new_start: Optional[datetime] = None,
+    new_end: Optional[datetime] = None,
+    destination_calendar_id: Optional[str] = None,
+    send_notifications: bool = True,
+) -> Optional[GoogleCalendarEvent]:
+    """Reschedules an event and/or moves it to a different calendar.
+
+    If only ``new_start`` is supplied the original duration is preserved.
+    If ``destination_calendar_id`` is supplied the event is first moved with
+    ``events().move()`` and then re-timed (when new times were given).
+
+    Args:
+        credentials: Valid Google OAuth2 credentials.
+        event_id: The ID of the event to move.
+        calendar_id: Calendar the event currently lives on.
+        new_start: New start time (timezone-aware recommended).
+        new_end: New end time. Optional when ``new_start`` is given.
+        destination_calendar_id: Calendar to move the event to.
+        send_notifications: Whether to notify attendees.
+
+    Returns:
+        The updated GoogleCalendarEvent, or None if the response could not be parsed.
+
+    Raises:
+        HttpError: If the Google Calendar API rejects the request.
+        ValueError: If neither a new time nor a destination calendar is supplied.
+    """
+    if new_start is None and new_end is None and not destination_calendar_id:
+        raise ValueError(
+            "move_event requires at least one of new_start, new_end or destination_calendar_id."
+        )
+
+    service = _get_calendar_service(credentials)
+
+    try:
+        existing = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+        source_calendar_id = calendar_id
+        if destination_calendar_id and destination_calendar_id != calendar_id:
+            logger.info(
+                f"Moving event '{event_id}' from '{calendar_id}' to '{destination_calendar_id}'."
+            )
+            existing = service.events().move(
+                calendarId=calendar_id,
+                eventId=event_id,
+                destination=destination_calendar_id,
+                sendNotifications=send_notifications,
+            ).execute()
+            source_calendar_id = destination_calendar_id
+            event_id = existing.get('id', event_id)
+
+        if new_start is None and new_end is None:
+            return GoogleCalendarEvent(**existing)
+
+        # Preserve the original timeZone hints where the caller did not override them.
+        start_tz = (existing.get('start') or {}).get('timeZone')
+        end_tz = (existing.get('end') or {}).get('timeZone')
+
+        resolved_start = new_start
+        resolved_end = new_end
+        if resolved_start is not None and resolved_end is None:
+            duration = _event_duration(existing)
+            if duration is not None:
+                resolved_end = resolved_start + duration
+            else:
+                logger.warning(
+                    f"Event '{event_id}' has no timed duration to preserve; "
+                    "leaving the end time untouched."
+                )
+
+        body: Dict[str, Any] = {}
+        if resolved_start is not None:
+            body['start'] = {'dateTime': resolved_start.isoformat()}
+            if start_tz:
+                body['start']['timeZone'] = start_tz
+        if resolved_end is not None:
+            body['end'] = {'dateTime': resolved_end.isoformat()}
+            if end_tz:
+                body['end']['timeZone'] = end_tz
+
+        logger.info(f"Re-timing event '{event_id}' on calendar '{source_calendar_id}'.")
+        updated = service.events().patch(
+            calendarId=source_calendar_id,
+            eventId=event_id,
+            body=body,
+            sendNotifications=send_notifications,
+        ).execute()
+        return GoogleCalendarEvent(**updated)
+
+    except HttpError as error:
+        logger.error(
+            f"Google API error while moving event '{event_id}': "
+            f"{getattr(error.resp, 'status', '?')}",
+            exc_info=True,
+        )
+        raise
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error while moving event '{event_id}': {e}", exc_info=True)
+        return None
+
+
+RESPONSE_STATUSES = ('accepted', 'declined', 'tentative', 'needsAction')
+
+
+def respond_to_event(
+    credentials: Credentials,
+    event_id: str,
+    response_status: str,
+    calendar_id: str = 'primary',
+    comment: Optional[str] = None,
+    send_notifications: bool = True,
+) -> Optional[GoogleCalendarEvent]:
+    """Sets the calendar owner's RSVP (``responseStatus``) on an invitation.
+
+    Args:
+        credentials: Valid Google OAuth2 credentials.
+        event_id: The ID of the event to respond to.
+        response_status: One of 'accepted', 'declined', 'tentative', 'needsAction'.
+        calendar_id: Calendar identifier the invitation lives on.
+        comment: Optional RSVP comment sent to the organizer.
+        send_notifications: Whether to notify the organizer.
+
+    Returns:
+        The updated GoogleCalendarEvent, or None if the response could not be parsed.
+
+    Raises:
+        HttpError: If the Google Calendar API rejects the request.
+        ValueError: If response_status is invalid or the user is not an attendee.
+    """
+    if response_status not in RESPONSE_STATUSES:
+        raise ValueError(
+            f"response_status must be one of {', '.join(RESPONSE_STATUSES)}; got '{response_status}'."
+        )
+
+    service = _get_calendar_service(credentials)
+
+    try:
+        existing = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+        attendees = existing.get('attendees') or []
+
+        self_index = next(
+            (i for i, a in enumerate(attendees) if a.get('self')),
+            None,
+        )
+        if self_index is None and calendar_id != 'primary':
+            self_index = next(
+                (i for i, a in enumerate(attendees)
+                 if (a.get('email') or '').lower() == calendar_id.lower()),
+                None,
+            )
+        if self_index is None:
+            raise ValueError(
+                f"Event '{event_id}' has no attendee entry for this calendar, so there is "
+                "nothing to RSVP to. Only invitations can be responded to."
+            )
+
+        attendees[self_index]['responseStatus'] = response_status
+        if comment is not None:
+            attendees[self_index]['comment'] = comment
+
+        logger.info(f"Setting RSVP for event '{event_id}' to '{response_status}'.")
+        updated = service.events().patch(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body={'attendees': attendees},
+            sendNotifications=send_notifications,
+        ).execute()
+        return GoogleCalendarEvent(**updated)
+
+    except HttpError as error:
+        logger.error(
+            f"Google API error while responding to event '{event_id}': "
+            f"{getattr(error.resp, 'status', '?')}",
+            exc_info=True,
+        )
+        raise
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error while responding to event '{event_id}': {e}", exc_info=True)
+        return None
+
+
+def get_calendar_timezone(
+    credentials: Credentials,
+    calendar_id: str = 'primary',
+) -> Optional[str]:
+    """Returns the IANA timezone of a calendar (e.g. 'Europe/Berlin').
+
+    Used to interpret naive datetimes the caller supplied without an offset.
+    Returns None when the calendar cannot be read, so callers can fall back.
+    """
+    service = _get_calendar_service(credentials)
+    try:
+        settings = service.calendars().get(calendarId=calendar_id).execute()
+        return settings.get('timeZone')
+    except Exception as e:
+        logger.warning(f"Could not read the timezone of calendar '{calendar_id}': {e}")
+        return None
