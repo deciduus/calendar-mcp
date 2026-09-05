@@ -2,6 +2,7 @@ import logging
 import uvicorn
 import sys
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from datetime import datetime, date, time
 from typing import Optional, List, Dict, Any
@@ -54,20 +55,14 @@ except ImportError as e:
     logger.error(f"Could not import modules: {e}")
     # Continue to allow partial server functionality
 
-app = FastAPI(
-    title="Google Calendar MCP Server",
-    description="MCP server for interacting with Google Calendar API.",
-    version="0.1.0"
-)
-
 # --- Global State / Initialization ---
 # Store credentials globally or pass them around
 # For simplicity, let's get them once on startup
 # In a production scenario, consider more robust credential management
 global_credentials: Optional[Credentials] = None
 
-@app.on_event("startup")
-def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Attempt to get credentials on server startup."""
     global global_credentials
     logger.info("Server starting up. Attempting to authenticate with Google...")
@@ -82,6 +77,14 @@ def startup_event():
         logger.error(f"An error occurred during startup authentication: {e}. Endpoints requiring auth will be unavailable.", exc_info=True)
         # Set credentials to None to indicate failure
         global_credentials = None
+    yield
+
+app = FastAPI(
+    title="Google Calendar MCP Server",
+    description="MCP server for interacting with Google Calendar API.",
+    version="0.1.0",
+    lifespan=lifespan
+)
 
 # --- Dependency for Credentials ---
 def get_current_credentials() -> Credentials:
@@ -705,5 +708,9 @@ def analyze_busyness_endpoint(
 # --- Main Execution ---
 if __name__ == "__main__":
     logger.info("Starting Google Calendar MCP Server...")
-    # Note: Startup event runs automatically with uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    # Note: Startup logic runs automatically with uvicorn via the lifespan handler
+    uvicorn.run(
+        app,
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000"))
+    )

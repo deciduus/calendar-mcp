@@ -96,6 +96,11 @@ def run_mcp_server():
         logger.error(f"MCP server thread failed: {e}", exc_info=True)
         # Handle the error appropriately, maybe signal the main thread
 
+    # mcp.run() returns when the client closes stdin; uvicorn.run() is still
+    # blocking the main thread, so exit the whole process rather than linger.
+    logger.info("MCP server stopped (stdin closed); exiting process")
+    os._exit(0)
+
 if __name__ == "__main__":
     # Add the current directory to the Python path
     project_dir = os.path.dirname(os.path.abspath(__file__))
@@ -131,7 +136,9 @@ if __name__ == "__main__":
     # FastAPI/Uvicorn settings
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", 8000))
-    reload = os.getenv("RELOAD", "true").lower() == "true"
+    # Default off: uvicorn's reloader spawns a subprocess, which breaks stdio
+    # MCP mode and is undesirable on shared infrastructure.
+    reload = os.getenv("RELOAD", "false").lower() == "true"
 
     logger.info(f"Starting FastAPI server on {host}:{port}...")
     logger.info(f"Reload mode: {'Enabled' if reload else 'Disabled'}")

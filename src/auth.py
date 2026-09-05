@@ -1,17 +1,10 @@
 import os
-import webbrowser
-import http.server
-import socketserver
-from urllib.parse import urlparse, parse_qs
-import threading
 import logging
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
@@ -25,86 +18,6 @@ SCOPES = [os.getenv('CALENDAR_SCOPES', 'https://www.googleapis.com/auth/calendar
 REDIRECT_PORT = int(os.getenv('OAUTH_CALLBACK_PORT', 8080))
 REDIRECT_URI = f'http://localhost:{REDIRECT_PORT}/oauth2callback'
 # Note: REDIRECT_URI must be registered in your Google Cloud Console OAuth Client settings!
-
-# --- Helper Classes/Functions ---
-
-class OAuthCallbackHandler(http.server.SimpleHTTPRequestHandler):
-    """Handles the OAuth callback request to capture the authorization code."""
-    def __init__(self, *args, flow_instance=None, shutdown_event=None, **kwargs):
-        self.flow = flow_instance
-        self.shutdown_event = shutdown_event
-        self.auth_code = None
-        self.error = None
-        super().__init__(*args, **kwargs)
-
-    def do_GET(self):
-        """Handle GET requests (the OAuth callback)."""
-        query_components = parse_qs(urlparse(self.path).query)
-        code = query_components.get('code')
-        error = query_components.get('error')
-
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-
-        if code:
-            self.auth_code = code[0]
-            logger.info("Authorization code received.")
-            self.wfile.write(b'<html><body><h1>Authentication Successful!</h1>')
-            self.wfile.write(b'<p>Authorization code received. You can close this window.</p></body></html>')
-        elif error:
-            self.error = error[0]
-            logger.error(f"OAuth Error: {self.error}")
-            self.wfile.write(b'<html><body><h1>Authentication Failed</h1>')
-            self.wfile.write(f'<p>Error: {self.error}. Please check console.</p></body></html>'.encode())
-        else:
-            logger.warning("Received callback without code or error.")
-            self.wfile.write(b'<html><body><h1>Invalid Callback</h1>')
-            self.wfile.write(b'<p>Received an unexpected request.</p></body></html>')
-
-        # Signal the main thread to stop the server
-        if self.shutdown_event:
-            self.shutdown_event.set()
-
-def start_local_http_server(port, flow, shutdown_event):
-    """Starts a temporary local HTTP server to handle the OAuth callback."""
-    handler = lambda *args, **kwargs: OAuthCallbackHandler(
-        *args, flow_instance=flow, shutdown_event=shutdown_event, **kwargs
-    )
-    httpd = None
-    try:
-        httpd = socketserver.TCPServer(("", port), handler)
-        logger.info(f"Starting temporary OAuth callback server on port {port}")
-        httpd.serve_forever() # This blocks until shutdown is called
-    except OSError as e:
-        logger.error(f"Failed to start callback server on port {port}: {e}")
-        # Signal error if server couldn't start
-        if shutdown_event:
-             shutdown_event.set() # Also signal to stop waiting
-        return None, None # Return None for handler if server failed
-    except Exception as e:
-        logger.error(f"An unexpected error occurred in the callback server: {e}")
-        if shutdown_event:
-             shutdown_event.set()
-        return None, None
-    finally:
-        if httpd:
-            logger.info("Shutting down OAuth callback server.")
-            # httpd.shutdown() # This should be called from another thread or after serve_forever unblocks
-            # httpd.server_close() # Clean up the socket
-            pass # Shutdown handled by the event
-
-    # This part is tricky because serve_forever blocks.
-    # The handler instance is associated with the request, not the server itself long-term.
-    # We need a way to get the code back to the main thread. The handler sets it.
-    # Let's assume the handler instance associated with the successful callback request is somehow accessible
-    # or that the main thread can access the handler's state after shutdown.
-    # A more robust way might use queues or other IPC.
-    # For now, let's return the handler type, but the instance holding the code is key.
-    # We will retrieve the code *after* the server is shut down.
-    # The handler instance is tricky to get back here directly after serve_forever.
-    # Let's return the server instance, shutdown called externally based on event.
-    return httpd, handler # Returning the handler *type* here. Need instance capture.
 
 def get_credentials():
     """Gets valid Google API credentials. Handles loading, refreshing, and the OAuth flow."""

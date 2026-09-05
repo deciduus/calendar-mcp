@@ -1,0 +1,25 @@
+[project]
+name = "calendar-mcp"
+version = "0.2.0"
+description = "MCP server exposing Google Calendar to LLM clients."
+requires-python = ">=3.10"
+license = "AGPL-3.0"
+dependencies = [
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-dateutil",
+    "mcp>=1.0,<2",
+    "python-dotenv",
+    "requests",
+    "pydantic[email]",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+]
