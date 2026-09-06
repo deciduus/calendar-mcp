@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "calendar-mcp-server"
-version = "1.0.1"
+version = "1.1.0"
 description = "A single-process MCP server that gives LLM clients read and write access to Google Calendar."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,7 @@ dependencies = [
     "python-dotenv",
     "requests",
     "tzdata",
+    "platformdirs",
 ]
 
 [project.optional-dependencies]
@@ -51,4 +52,4 @@ Homepage = "https://github.com/deciduus/calendar-mcp"
 Repository = "https://github.com/deciduus/calendar-mcp"
 
 [tool.setuptools]
-packages = ["calendar_mcp"]
+packages = ["calendar_mcp", "calendar_mcp.tools"]

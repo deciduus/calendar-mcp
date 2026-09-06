@@ -23,6 +23,10 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "dummy-client-secret")
 # Point the token file somewhere that cannot exist, so nothing picks up a real
 # token from the developer's working copy.
 os.environ["TOKEN_FILE_PATH"] = str(REPO_ROOT / "tests" / ".no-such-token.json")
+# Point the multi-account config directory somewhere that cannot exist either,
+# so account discovery and preferences never see the developer's real config.
+os.environ["CALENDAR_MCP_CONFIG_DIR"] = str(REPO_ROOT / "tests" / ".no-such-config")
+os.environ.pop("CALENDAR_MCP_DEFAULT_ACCOUNT", None)
 # Never let a test open a browser.
 os.environ["CALENDAR_MCP_ALLOW_BROWSER_AUTH"] = "0"
 

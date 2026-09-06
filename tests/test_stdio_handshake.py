@@ -35,6 +35,14 @@ EXPECTED_TOOLS = {
     "respond_to_event",
     "schedule_mutual",
     "delete_event",
+    "list_accounts",
+    "get_preferences",
+    "set_preferences",
+    "time_audit",
+    "find_focus_time",
+    "block_focus_time",
+    "detect_conflicts",
+    "suggest_reschedule",
 }
 
 HANDSHAKE_TIMEOUT_SECONDS = 60.0
@@ -81,11 +89,11 @@ async def test_stdio_subprocess_handshake_lists_all_tools():
         pytest.skip(f"Could not spawn the stdio server subprocess: {exc}")
 
     assert init.server_info.name == "calendar-mcp"
-    assert init.server_info.version == "1.0.1"
+    assert init.server_info.version == "1.1.0"
     assert init.instructions
 
     names = {tool.name for tool in listing.tools}
     assert names == EXPECTED_TOOLS
-    assert len(listing.tools) == 15
+    assert len(listing.tools) == len(EXPECTED_TOOLS) == 23
     # Every tool advertises structured output over the wire, not just in-process.
     assert all(tool.output_schema for tool in listing.tools)

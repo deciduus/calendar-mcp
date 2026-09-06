@@ -21,7 +21,7 @@ import anyio
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-EXPECTED_TOOL_COUNT = 15
+EXPECTED_TOOL_COUNT = 23
 
 
 async def smoke(command: str) -> int:
@@ -32,6 +32,8 @@ async def smoke(command: str) -> int:
             "GOOGLE_CLIENT_SECRET": "smoke-test-client-secret",
             # Point at a path that cannot exist, so the run proves no token is needed.
             "TOKEN_FILE_PATH": os.path.join(tempfile.gettempdir(), "calendar-mcp-no-such-token.json"),
+            # Same for the multi-account config directory.
+            "CALENDAR_MCP_CONFIG_DIR": os.path.join(tempfile.gettempdir(), "calendar-mcp-no-such-config"),
             "CALENDAR_MCP_LOG_LEVEL": "WARNING",
         }
     )
