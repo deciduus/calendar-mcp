@@ -3,6 +3,68 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-05
+
+Multiple accounts, saved scheduling preferences, and a scheduling brain that
+reasons about your working hours rather than just your calendar. 15 tools ->
+23. Nothing is removed and nothing is renamed.
+
+### Added
+
+- **Multiple Google accounts.** `calendar-mcp auth --account work` signs in an
+  additional named account; `calendar-mcp accounts` lists them with their token
+  files and sign-in state. Every calendar tool gained an optional trailing
+  `account` argument, and `detect_conflicts` takes `accounts` (a list) so it can
+  check them all at once. New `list_accounts` tool, new
+  `CALENDAR_MCP_DEFAULT_ACCOUNT` environment variable.
+- **A config directory.** Tokens (`accounts/<name>.json`) and `preferences.json`
+  now live in the OS user config directory, overridable with
+  `CALENDAR_MCP_CONFIG_DIR`.
+- **Saved scheduling preferences**: timezone, per-weekday working hours, lunch,
+  `buffer_minutes`, `min_focus_block_minutes` and `focus_calendar_id`, read with
+  `get_preferences` and updated with `set_preferences`. Both are local-only and
+  never call Google. `set_preferences` merges field by field and validates the
+  merged result before writing, so a rejected change leaves the saved file
+  intact; `working_hours` is the exception and replaces the whole schedule.
+- **`find_focus_time`** - uninterrupted blocks inside the working hours, with
+  lunch, booked events and the buffer removed, longest first.
+- **`block_focus_time`** - books those blocks as events (busy, reminders off,
+  no notifications), trimming the last one to the hours actually requested.
+  `dry_run: true` previews without writing.
+- **`detect_conflicts`** - genuine overlaps and too-tight transitions, across
+  every signed-in account, so a work meeting clashing with a personal one is
+  visible. Declined, free-marked, cancelled and (by default) all-day events are
+  ignored.
+- **`suggest_reschedule`** - ranked alternative times for an existing meeting,
+  preserving its duration, ranked by fewest attendee conflicts and preferring
+  its current day. Suggests only; `apply: true` performs the move.
+- **`time_audit`** - meeting hours as a share of available working hours,
+  grouped by day or week, broken down by meeting size, attendee domain,
+  recurring vs one-off, and the people you spend the most time with.
+- `platformdirs` is now a dependency.
+
+### Changed
+
+- Tool functions moved out of `server.py` into a `calendar_mcp.tools`
+  subpackage, one module per subject area. `server.py` keeps the `MCPServer`,
+  the shared helpers and the credential provider, and still re-exports every
+  tool by name. New internal modules: `accounts.py`, `preferences.py`,
+  `timeutil.py`.
+- Credentials are cached per account rather than globally, and the
+  calendar-timezone cache is now keyed by account as well as calendar ID, so
+  one account's `primary` can no longer supply another account's timezone when
+  a naive timestamp is resolved.
+- Events carry Google's `transparency` field, so an event the user marked
+  "free" is correctly ignored by `detect_conflicts` and `time_audit`.
+- `TOKEN_FILE_PATH` now means "the default account's token". It, and an existing
+  `.gcp-saved-tokens.json` in the working directory, continue to work unchanged.
+
+### Compatibility
+
+- All 15 tools from 1.0 keep their names and their existing parameters; the only
+  change is an added optional `account`. Existing prompts and client configs
+  keep working.
+
 ## [1.0.1] - 2026-09-05
 
 - Add the MCP Registry ownership marker (`mcp-name`) to the README so the package can be listed at registry.modelcontextprotocol.io.

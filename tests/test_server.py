@@ -42,6 +42,14 @@ EXPECTED_TOOLS = {
     "respond_to_event",
     "schedule_mutual",
     "delete_event",
+    "list_accounts",
+    "get_preferences",
+    "set_preferences",
+    "time_audit",
+    "find_focus_time",
+    "block_focus_time",
+    "detect_conflicts",
+    "suggest_reschedule",
 }
 
 READ_ONLY_TOOLS = {
@@ -51,6 +59,11 @@ READ_ONLY_TOOLS = {
     "query_free_busy",
     "analyze_busyness",
     "project_recurring_events",
+    "list_accounts",
+    "get_preferences",
+    "time_audit",
+    "find_focus_time",
+    "detect_conflicts",
 }
 
 EVENT_PAYLOAD = {
@@ -116,10 +129,10 @@ async def structured(name, arguments=None):
 # --- tool registry ------------------------------------------------------------
 
 
-async def test_list_tools_exposes_exactly_the_expected_fifteen():
+async def test_list_tools_exposes_exactly_the_expected_set():
     tools = await server_module.server.list_tools()
     assert {t.name for t in tools} == EXPECTED_TOOLS
-    assert len(tools) == 15
+    assert len(tools) == len(EXPECTED_TOOLS) == 23
 
 
 async def test_every_tool_has_a_description_and_output_schema():
@@ -149,7 +162,7 @@ async def test_tool_annotations_classify_reads_writes_and_deletes():
 
 async def test_server_identity_and_instructions():
     assert server_module.server.name == "calendar-mcp"
-    assert server_module.SERVER_VERSION == "1.0.1"
+    assert server_module.SERVER_VERSION == "1.1.0"
     assert "calendar_id" in server_module.INSTRUCTIONS
 
 
@@ -289,6 +302,32 @@ async def test_find_events_caches_the_calendar_timezone_lookup(actions):
     await structured("find_events", {"time_min": "2026-01-02T09:00:00"})
 
     assert actions.get_calendar_timezone.call_count == 1
+
+
+async def test_the_calendar_timezone_cache_does_not_leak_across_accounts(actions):
+    """'primary' is a different calendar, in a different zone, per account."""
+    zones = {"work": "America/New_York", "personal": "Europe/Berlin"}
+
+    def creds_for(account=None):
+        creds = MagicMock(name=f"credentials-{account}")
+        creds._calendar_mcp_account = account
+        return creds
+
+    actions.provider.get.side_effect = creds_for
+    actions.get_calendar_timezone.side_effect = (
+        lambda creds, calendar_id: zones[creds._calendar_mcp_account]
+    )
+    actions.find_events.return_value = EventsResponse(items=[])
+
+    await structured("find_events", {"time_min": "2026-01-01T09:00:00", "account": "work"})
+    work_min = actions.find_events.call_args.kwargs["time_min"]
+
+    await structured("find_events", {"time_min": "2026-01-01T09:00:00", "account": "personal"})
+    personal_min = actions.find_events.call_args.kwargs["time_min"]
+
+    # 09:00 New York is 14:00 UTC; 09:00 Berlin is 08:00 UTC.
+    assert work_min.astimezone(UTC) == datetime(2026, 1, 1, 14, tzinfo=UTC)
+    assert personal_min.astimezone(UTC) == datetime(2026, 1, 1, 8, tzinfo=UTC)
 
 
 async def test_find_events_rejects_an_unparseable_timestamp(actions):

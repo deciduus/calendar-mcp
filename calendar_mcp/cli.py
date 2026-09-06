@@ -3,6 +3,8 @@
     calendar-mcp                       # serve MCP over stdio (the default)
     calendar-mcp --transport http      # serve MCP over streamable HTTP
     calendar-mcp auth                  # sign in to Google in a browser, once
+    calendar-mcp auth --account work   # sign in a second, named account
+    calendar-mcp accounts              # list the accounts and their token files
     calendar-mcp check                 # verify the saved token works
 
 Logging never goes to stdout: in stdio mode stdout is the MCP protocol channel.
@@ -118,13 +120,15 @@ def build_parser() -> argparse.ArgumentParser:
             "  calendar-mcp                      serve over stdio (what MCP clients launch)\n"
             "  calendar-mcp --transport http --port 8000\n"
             "  calendar-mcp auth                 one-time Google sign-in in a browser\n"
+            "  calendar-mcp auth --account work  sign in an additional named account\n"
+            "  calendar-mcp accounts             list the known accounts\n"
             "  calendar-mcp check                verify the saved token still works\n"
         ),
     )
     parser.add_argument("--version", action="version", version=f"{PROG} {__version__}")
     _add_serve_arguments(parser)
 
-    subparsers = parser.add_subparsers(dest="command", metavar="{serve,auth,check}")
+    subparsers = parser.add_subparsers(dest="command", metavar="{serve,auth,accounts,check}")
 
     serve = subparsers.add_parser("serve", help="Serve MCP (the default when no subcommand is given).")
     _add_serve_arguments(serve)
@@ -139,6 +143,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the authorization URL instead of opening a browser.",
     )
     auth_cmd.add_argument(
+        "--account",
+        default=None,
+        metavar="NAME",
+        help="Account to sign in, e.g. 'work'. Omit for the default account. Each "
+        "account keeps its own token, so several Google accounts can be signed "
+        "in at once.",
+    )
+    auth_cmd.add_argument(
+        "--log-level",
+        default="WARNING",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging verbosity on stderr (default: WARNING).",
+    )
+
+    accounts_cmd = subparsers.add_parser(
+        "accounts",
+        help="List the known accounts, their token files and whether each is signed in.",
+    )
+    accounts_cmd.add_argument(
         "--log-level",
         default="WARNING",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -148,6 +171,12 @@ def build_parser() -> argparse.ArgumentParser:
     check = subparsers.add_parser(
         "check",
         help="Report whether a valid Google token exists, and list the calendars.",
+    )
+    check.add_argument(
+        "--account",
+        default=None,
+        metavar="NAME",
+        help="Account to check. Omit for the default account.",
     )
     check.add_argument(
         "--log-level",
@@ -173,9 +202,19 @@ def command_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_account(args: argparse.Namespace) -> Optional[str]:
+    """The account named on the command line, validated. ``None`` for the default."""
+    from . import accounts
+
+    requested = getattr(args, "account", None)
+    if requested is None:
+        return None
+    return accounts.validate_account_name(requested)
+
+
 def command_auth(args: argparse.Namespace) -> int:
     """Runs the interactive OAuth flow and reports where the token landed."""
-    from . import auth
+    from . import accounts, auth
 
     if not auth.client_id() or not auth.client_secret():
         print(
@@ -186,37 +225,87 @@ def command_auth(args: argparse.Namespace) -> int:
         )
         return 1
 
+    try:
+        account = accounts.resolve_account(_resolve_account(args))
+    except accounts.AccountError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 1
+
+    token_path = accounts.token_path_for(account)
+    # A named account's token lands under the config directory, which may not
+    # exist yet; the legacy single-token path is created by auth.save_credentials.
+    if account != accounts.DEFAULT_ACCOUNT or not accounts.legacy_token_path():
+        accounts.ensure_accounts_dir()
+
     print(f"Opening a browser to authorize {PROG} against your Google Calendar...")
+    print(f"Account: {account}")
+    print(f"Token will be saved to: {os.path.abspath(token_path)}")
     print(f"Redirect URI in use: {auth.redirect_uri()}")
     print(
         "A 'Desktop app' OAuth client accepts http://localhost on any port, so there\n"
         "is nothing to register; set OAUTH_CALLBACK_PORT if this port is taken.\n"
     )
     try:
-        auth.run_oauth_flow(open_browser=not args.no_browser)
+        auth.run_oauth_flow(open_browser=not args.no_browser, path=token_path)
     except auth.AuthError as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 1
 
-    path = os.path.abspath(auth.token_file_path())
-    print(f"\nAuthorized. Token saved to {path}")
+    print(f"\nAuthorized. Token saved to {os.path.abspath(token_path)}")
     print(f"You can now run '{PROG}' (or point your MCP client at it).")
+    if account != accounts.DEFAULT_ACCOUNT:
+        print(
+            f"Pass account='{account}' to any tool, or set "
+            f"CALENDAR_MCP_DEFAULT_ACCOUNT={account} to make it the default."
+        )
+    return 0
+
+
+def command_accounts(args: argparse.Namespace) -> int:
+    """Lists the known accounts, their token files and their sign-in state."""
+    from . import accounts
+
+    print(f"Config directory: {accounts.config_dir()}")
+    infos = accounts.list_accounts()
+    print(f"\nAccounts ({len(infos)}):")
+    for info in infos:
+        marker = " (default)" if info.is_default else ""
+        state = "signed in" if info.valid else "not signed in"
+        who = f" <{info.email}>" if info.email else ""
+        print(f"  {info.name}{marker}{who} -- {state}")
+        print(f"      token: {info.token_path}")
+
+    if not any(info.valid for info in infos):
+        print(
+            f"\nNo account is signed in yet. Run '{PROG} auth' "
+            "(add --account NAME for an additional one).",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
 def command_check(args: argparse.Namespace) -> int:
     """Reports token status and, when possible, lists the user's calendars."""
-    from . import auth, calendar_actions
+    from . import accounts, auth, calendar_actions
 
-    token_path = os.path.abspath(auth.token_file_path())
+    try:
+        account = accounts.resolve_account(_resolve_account(args))
+    except accounts.AccountError as exc:
+        print(f"{PROG}: {exc}", file=sys.stderr)
+        return 1
+
+    token_path = os.path.abspath(accounts.token_path_for(account))
+    print(f"Account: {account}")
     print(f"Token file: {token_path}")
     print(f"Client ID configured: {'yes' if auth.client_id() else 'no'}")
     print(f"Client secret configured: {'yes' if auth.client_secret() else 'no'}")
 
-    creds = auth.load_credentials()
+    creds = auth.load_credentials(path=token_path)
     if creds is None:
+        suffix = "" if account == accounts.DEFAULT_ACCOUNT else f" --account {account}"
         print(
-            f"\nNo valid Google Calendar token.\nRun '{PROG} auth' to sign in.",
+            f"\nNo valid Google Calendar token.\nRun '{PROG} auth{suffix}' to sign in.",
             file=sys.stderr,
         )
         return 1
@@ -255,6 +344,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if command == "auth":
             return command_auth(args)
+        if command == "accounts":
+            return command_accounts(args)
         if command == "check":
             return command_check(args)
         return command_serve(args)

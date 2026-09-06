@@ -9,6 +9,12 @@ run ``calendar-mcp auth`` if that is not possible.
 
 Set ``CALENDAR_MCP_ALLOW_BROWSER_AUTH=1`` (or pass ``allow_browser=True``, which
 the ``calendar-mcp auth`` subcommand does) to permit the interactive flow.
+
+Every function here takes an explicit ``path`` for the token file, so one
+process can hold several signed-in accounts at once. Omitting it falls back to
+:func:`token_file_path` -- the single legacy location -- which keeps the old
+signatures working unchanged. Callers that care about named accounts should ask
+:func:`calendar_mcp.accounts.token_path_for` for the path instead.
 """
 
 import logging
@@ -51,7 +57,12 @@ def client_secret() -> Optional[str]:
 
 
 def token_file_path() -> str:
-    """Absolute-or-relative path of the file the OAuth token is cached in."""
+    """The legacy single-account token path: ``$TOKEN_FILE_PATH`` or the default.
+
+    This is the fallback for every ``path`` argument in this module, and the
+    ``default`` account's token file when it is configured. For a named account
+    use :func:`calendar_mcp.accounts.token_path_for`.
+    """
     return os.getenv("TOKEN_FILE_PATH", DEFAULT_TOKEN_FILE)
 
 
@@ -120,13 +131,23 @@ def save_credentials(creds: Credentials, path: Optional[str] = None) -> str:
     return target
 
 
-def load_credentials(refresh: bool = True) -> Optional[Credentials]:
-    """Loads the saved token, refreshing it when expired. Never opens a browser.
+def load_credentials(
+    refresh: bool = True,
+    path: Optional[str] = None,
+) -> Optional[Credentials]:
+    """Loads a saved token, refreshing it when expired. Never opens a browser.
 
-    Returns valid :class:`Credentials`, or ``None`` when there is no usable
-    saved token.
+    Args:
+        refresh: Exchange an expired token for a fresh one (and re-save it).
+        path: Token file to read. Defaults to :func:`token_file_path`, i.e. the
+            legacy single-account location; pass
+            :func:`calendar_mcp.accounts.token_path_for` for a named account.
+
+    Returns:
+        Valid :class:`Credentials`, or ``None`` when there is no usable saved
+        token at ``path``.
     """
-    path = token_file_path()
+    path = path or token_file_path()
     if not os.path.exists(path):
         logger.info("No saved token at %s", path)
         return None
@@ -156,8 +177,17 @@ def load_credentials(refresh: bool = True) -> Optional[Credentials]:
     return None
 
 
-def run_oauth_flow(open_browser: bool = True) -> Credentials:
+def run_oauth_flow(
+    open_browser: bool = True,
+    path: Optional[str] = None,
+) -> Credentials:
     """Runs the interactive installed-app OAuth flow and saves the token.
+
+    Args:
+        open_browser: Open the consent screen automatically. False prints the
+            URL instead, for a headless terminal.
+        path: Where to save the resulting token. Defaults to
+            :func:`token_file_path`.
 
     Raises:
         AuthError: If the client is not configured or the flow does not complete.
@@ -183,23 +213,30 @@ def run_oauth_flow(open_browser: bool = True) -> Credentials:
     if not creds or not creds.valid:
         raise AuthError("The Google OAuth flow did not produce valid credentials.")
 
-    save_credentials(creds)
+    save_credentials(creds, path)
     return creds
 
 
-def get_credentials(allow_browser: Optional[bool] = None) -> Credentials:
+def get_credentials(
+    allow_browser: Optional[bool] = None,
+    path: Optional[str] = None,
+) -> Credentials:
     """Returns valid Google credentials.
 
     Args:
         allow_browser: Permit the interactive OAuth flow. ``None`` (the default)
             means "consult the ``CALENDAR_MCP_ALLOW_BROWSER_AUTH`` env var",
             which is off by default so an MCP server never blocks on a browser.
+        path: Token file to load and, if the browser flow runs, save to.
+            Defaults to :func:`token_file_path`.
 
     Raises:
         AuthError: If no valid token exists and the browser flow is not allowed
             (or fails). The message tells the user how to fix it.
     """
-    creds = load_credentials()
+    target = path or token_file_path()
+
+    creds = load_credentials(path=target)
     if creds is not None:
         return creds
 
@@ -209,17 +246,17 @@ def get_credentials(allow_browser: Optional[bool] = None) -> Credentials:
     if not allow_browser:
         raise AuthError(
             "No valid Google Calendar token was found at "
-            f"'{token_file_path()}'. Run 'calendar-mcp auth' once in a terminal to "
+            f"'{target}'. Run 'calendar-mcp auth' once in a terminal to "
             f"sign in, or set {ALLOW_BROWSER_AUTH_ENV}=1 to let the server open a "
             "browser window itself."
         )
 
-    return run_oauth_flow()
+    return run_oauth_flow(path=target)
 
 
-def has_valid_token() -> bool:
-    """True when a saved (or refreshable) token is currently usable."""
+def has_valid_token(path: Optional[str] = None) -> bool:
+    """True when a saved (or refreshable) token at ``path`` is currently usable."""
     try:
-        return load_credentials() is not None
+        return load_credentials(path=path) is not None
     except Exception:  # pragma: no cover - defensive
         return False
