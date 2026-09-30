@@ -3,6 +3,24 @@
 All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-30
+
+### Fixed
+
+- Fail closed on unknown availability before focus booking, mutual scheduling,
+  and rescheduling. Missing calendar responses, access errors, and malformed
+  busy intervals now return an error instead of being treated as free time.
+- Refuse incomplete or unreadable default calendar discovery before focus search,
+  preview, or booking. When discovery is paginated, provide an explicit complete
+  list of calendar IDs to check.
+- Always check the destination calendar for focus booking and the organizer's
+  calendar in both mutual-scheduling paths.
+
+### Documentation
+
+- Add a synthetic, offline-test-backed scheduling demo and explain the safety
+  checks and the remaining race between availability reads and event writes.
+
 ## [1.1.0] - 2026-09-05
 
 Multiple accounts, saved scheduling preferences, and a scheduling brain that
