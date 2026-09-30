@@ -88,7 +88,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 SERVER_NAME = "calendar-mcp"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.1.1"
 
 #: Shared wording for the ``account`` argument every tool accepts, so the
 #: description a client sees is identical everywhere.
