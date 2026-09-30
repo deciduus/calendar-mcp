@@ -220,6 +220,9 @@ Declined meetings, events marked free and all-day entries are left out by defaul
   mutual-scheduling paths, and reschedule suggestions/application require readable
   availability for every checked calendar. Errors are returned before writes,
   rather than warnings after booking. Restore access or retry before scheduling.
+  Default focus-calendar discovery also refuses an incomplete, paginated calendar
+  list; supply an explicit complete list with `calendar_ids` / `check_calendar_ids`
+  in that case.
 - **`suggest_reschedule` does not move anything by default.** `apply` is `false`
   and has to be set explicitly, once the user has agreed to a time.
 - **Everything else that writes is additive** — creating or editing an event —

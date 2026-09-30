@@ -715,3 +715,24 @@ async def test_reschedule_refuses_unknown_attendee_availability(actions, apply, 
             "search_days": 1, "apply": apply,
         })
     actions.move_event.assert_not_called()
+
+
+@pytest.mark.parametrize("tool,extra", [
+    ("find_focus_time", {}),
+    ("block_focus_time", {"dry_run": True}),
+    ("block_focus_time", {}),
+])
+async def test_focus_refuses_incomplete_calendar_discovery(actions, tool, extra):
+    actions.find_calendars.return_value = CalendarListResponse(
+        items=[CalendarListEntry(etag='"1"', id="primary", selected=True)],
+        nextPageToken="page-2",
+    )
+    with pytest.raises(ToolError, match="selected calendar list is incomplete"):
+        await server_module.server.call_tool(tool, {
+            "time_min": "2026-01-01T09:00:00Z",
+            "time_max": "2026-01-01T17:00:00Z",
+            "hours_needed": 2,
+            **extra,
+        })
+    actions.find_availability.assert_not_called()
+    actions.create_event.assert_not_called()

@@ -61,6 +61,12 @@ def selected_calendar_ids(creds) -> List[str]:
             "Availability is unknown: the selected calendar list could not be read. "
             "No scheduling changes were made. Restore calendar access or retry."
         )
+    if response.nextPageToken:
+        raise srv.CalendarToolError(
+            "Availability is unknown: the selected calendar list is incomplete "
+            "(more pages exist). No scheduling changes were made. "
+            "Provide an explicit complete list of calendar IDs to check."
+        )
     chosen = [
         entry.id
         for entry in response.items
