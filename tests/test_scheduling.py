@@ -341,7 +341,9 @@ async def test_find_focus_time_reports_the_gaps_in_the_working_day(actions):
 
 
 async def test_find_focus_time_says_when_the_week_cannot_supply_the_hours(actions):
-    actions.find_availability.return_value = busy_response(primary=[span(1, 10, 17)])
+    actions.find_availability.return_value = busy_response(
+        primary=[span(1, 10, 17)], **{"work@example.com": []}
+    )
 
     data = await structured("find_focus_time", {
         "time_min": "2026-01-01T00:00:00Z",
@@ -618,3 +620,98 @@ async def test_schedule_mutual_can_ignore_preferences_entirely(actions):
     kwargs = actions.find_mutual_availability_and_schedule.call_args.kwargs
     assert kwargs["working_hours_start"] is None
     assert kwargs["working_hours_end"] is None
+
+
+@pytest.mark.parametrize("tool,extra,ids_arg", [
+    ("find_focus_time", {}, "calendar_ids"),
+    ("block_focus_time", {"dry_run": True}, "check_calendar_ids"),
+    ("block_focus_time", {}, "check_calendar_ids"),
+])
+@pytest.mark.parametrize("response", [
+    None,
+    {},
+    {"primary": {"busy": [], "errors": []}},  # the guest is missing
+    {"primary": {"busy": []}, "guest@example.com": {"busy": [], "errors": [{"reason": "notFound"}]}},
+    {"primary": {"busy": []}, "guest@example.com": {"busy": [], "errors": [{"reason": "forbidden"}]}},
+    {"primary": {"busy": []}, "guest@example.com": {}},
+    {"primary": {"busy": []}, "guest@example.com": {"busy": [{"start": dt(1, 11), "end": dt(1, 10)}]}},
+])
+async def test_focus_refuses_unknown_availability_before_any_write(actions, tool, extra, ids_arg, response):
+    actions.find_availability.return_value = response
+    with pytest.raises(ToolError, match="Availability is unknown"):
+        await server_module.server.call_tool(tool, {
+            "time_min": "2026-01-01T09:00:00Z",
+            "time_max": "2026-01-01T17:00:00Z",
+            "hours_needed": 2,
+            ids_arg: ["primary", "guest@example.com"],
+            **extra,
+        })
+    actions.create_event.assert_not_called()
+
+
+@pytest.mark.parametrize("tool", ["find_focus_time", "block_focus_time"])
+async def test_focus_refuses_unreadable_calendar_discovery(actions, tool):
+    actions.find_calendars.return_value = None
+    with pytest.raises(ToolError, match="selected calendar list could not be read"):
+        await server_module.server.call_tool(tool, {
+            "time_min": "2026-01-01T09:00:00Z",
+            "time_max": "2026-01-01T17:00:00Z",
+            "hours_needed": 2,
+        })
+    actions.find_availability.assert_not_called()
+    actions.create_event.assert_not_called()
+
+
+async def test_focus_checks_destination_even_when_not_selected(actions):
+    actions.find_availability.return_value = busy_response(primary=[], focus=[span(1, 9, 17)])
+    with pytest.raises(ToolError, match="No free block"):
+        await server_module.server.call_tool("block_focus_time", {
+            "time_min": "2026-01-01T09:00:00Z",
+            "time_max": "2026-01-01T17:00:00Z",
+            "hours_needed": 2,
+            "calendar_id": "focus",
+            "check_calendar_ids": ["primary"],
+        })
+    assert actions.find_availability.call_args.kwargs["calendar_ids"] == ["primary", "focus"]
+    actions.create_event.assert_not_called()
+
+
+@pytest.mark.parametrize("response", [
+    None,
+    busy_response(primary=[]),
+    {"primary": {"busy": []}, "guest@example.com": {"busy": [], "errors": [{"reason": "forbidden"}]}},
+])
+async def test_mutual_preferences_refuses_unknown_availability(actions, response):
+    from calendar_mcp import preferences as preferences_module
+
+    actions.find_availability.return_value = response
+    with patch.object(preferences_module, "load", return_value=preferences_module.Preferences(lunch=("12:00", "13:00"))):
+        with pytest.raises(ToolError, match="Availability is unknown"):
+            await server_module.server.call_tool("schedule_mutual", {
+                "attendee_calendar_ids": ["guest@example.com"],
+                "time_min": "2026-01-01T09:00:00Z",
+                "time_max": "2026-01-01T17:00:00Z",
+                "duration_minutes": 60,
+                "summary": "Sync",
+            })
+    actions.create_event.assert_not_called()
+    actions.find_mutual_availability_and_schedule.assert_not_called()
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.parametrize("response", [
+    busy_response(primary=[]),
+    {"primary": {"busy": []}, "guest@example.com": {"busy": [], "errors": [{"reason": "notFound"}]}},
+])
+async def test_reschedule_refuses_unknown_attendee_availability(actions, apply, response):
+    actions.get_event.return_value = event_payload(
+        "evt-1", dt(1, 14), dt(1, 15),
+        attendees=[{"email": "guest@example.com", "responseStatus": "accepted"}],
+    )
+    actions.find_availability.return_value = response
+    with pytest.raises(ToolError, match="Availability is unknown"):
+        await server_module.server.call_tool("suggest_reschedule", {
+            "event_id": "evt-1", "search_from": "2026-01-01T09:00:00Z",
+            "search_days": 1, "apply": apply,
+        })
+    actions.move_event.assert_not_called()

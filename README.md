@@ -2,6 +2,56 @@
 
 An MCP server that gives an LLM client read and write access to your Google Calendar. It runs as a single process — stdio by default, streamable HTTP optionally — and exposes 23 tools with structured output: listing and searching calendars and events, creating, updating, moving, RSVPing to and deleting events, free/busy queries, busyness analysis, recurring-event projection, and finding a mutual slot and booking it. On top of that it has a scheduling brain that knows your working hours: finding and booking focus time, detecting double-bookings across several accounts at once, proposing better times for a meeting, and auditing where your week actually went. Authentication is Google OAuth 2.0 (Desktop app flow); tokens are cached locally, per account, and refreshed automatically.
 
+## A calendar task, end to end
+
+**Synthetic example, backed by offline tests; no real calendar data or live booking.**
+Assume Thursday working hours of 09:00–17:00 UTC, one meeting at 11:00–12:00,
+no lunch or buffer, and a 60-minute minimum focus block.
+
+> “Find six hours of focus time on January 1, 2026. Show me the blocks first.”
+
+An MCP client can call:
+
+```json
+{
+  "tool": "block_focus_time",
+  "arguments": {
+    "time_min": "2026-01-01T00:00:00Z",
+    "time_max": "2026-01-02T00:00:00Z",
+    "hours_needed": 6,
+    "dry_run": true
+  }
+}
+```
+
+The preview selects 09:00–10:00 and 12:00–17:00: six hours, with the last
+selected block trimmed to the remaining hour. Both events have `created: false`.
+After the user approves the times, the client can call with `dry_run: false`;
+availability is read again before creating events. A preview does not reserve a slot.
+
+**Design decision: unknown availability is not free time.** If a checked calendar
+returns an access error, disappears from the response, or has unreadable busy
+intervals, focus search and booking return an error before writing anything.
+The same check protects mutual scheduling and reschedule suggestions/application.
+For example, a `notFound` response for `work@example.com` becomes:
+
+```text
+Availability is unknown: work@example.com: notFound. No scheduling changes were made.
+Restore calendar access or retry the query.
+```
+
+Reproduce the preview and the safety regression without Google credentials
+(after the [development install](#development)):
+
+```bash
+pytest -q tests/test_scheduling.py -k 'focus_time_dry_run or focus_refuses_unknown'
+```
+
+The regression verifies that partial, missing and errored availability never
+calls `create_event`, in both preview and booking modes. Successful empty busy
+lists still mean genuinely free time. Availability checks and writes are separate
+Google API calls, so another client can still book a competing event between them.
+
 ## Quick start
 
 **1. Create Google OAuth credentials.** In the [Google Cloud console](https://console.cloud.google.com/), enable the Google Calendar API, then create an OAuth client ID of type **Desktop app**. Copy the client ID and secret. (Details in [Google Cloud setup](#google-cloud-setup).)
@@ -164,7 +214,12 @@ Declined meetings, events marked free and all-day entries are left out by defaul
   through MCP elicitation when the client supports it, and proceeds normally when
   it does not.
 - **`block_focus_time` takes `dry_run`.** Run it with `dry_run: true` to see the
-  exact blocks it would book before anything is written.
+  exact blocks it would book before anything is written. The destination calendar
+  is always included in the availability check.
+- **Scheduling fails closed on unknown availability.** Focus search/booking, both
+  mutual-scheduling paths, and reschedule suggestions/application require readable
+  availability for every checked calendar. Errors are returned before writes,
+  rather than warnings after booking. Restore access or retry before scheduling.
 - **`suggest_reschedule` does not move anything by default.** `apply` is `false`
   and has to be set explicitly, once the user has agreed to a time.
 - **Everything else that writes is additive** — creating or editing an event —
@@ -300,6 +355,10 @@ Layout: `calendar_mcp/server.py` (the `MCPServer`, shared helpers and the creden
 Nothing breaks. All 15 original tools keep their names and their existing
 parameters; each simply gained an optional trailing `account`. Your existing
 `TOKEN_FILE_PATH` keeps working, and now names the default account's token.
+Scheduling safety: unavailable, omitted or malformed free/busy data now causes
+focus search, previews, mutual scheduling and rescheduling to return an error.
+No automatic scheduling changes are made with incomplete availability.
+
 What is new: multiple accounts, saved scheduling preferences, and eight new
 tools (`find_focus_time`, `block_focus_time`, `detect_conflicts`,
 `suggest_reschedule`, `time_audit`, `list_accounts`, `get_preferences`,

@@ -615,3 +615,53 @@ def test_find_availability_with_no_calendars_short_circuits(fake_service):
         calendar_ids=[],
     ) == {}
     fake_service.freebusy.assert_not_called()
+
+
+@pytest.mark.parametrize("interval", [
+    {"start": "bad", "end": "2026-01-01T10:00:00Z"},
+    {"start": "2026-01-01T11:00:00Z", "end": "2026-01-01T10:00:00Z"},
+    {"start": "2026-01-01T09:00:00", "end": "2026-01-01T10:00:00"},
+    None,
+])
+def test_find_availability_preserves_malformed_interval_as_error(fake_service, interval):
+    fake_service.freebusy.return_value.query.return_value.execute.return_value = {
+        "calendars": {"primary": {"busy": [interval]}}
+    }
+    result = calendar_actions.find_availability(CREDS, _iv(9, 10)["start"], _iv(9, 10)["end"], ["primary"])
+    assert result["primary"]["errors"] == [{"reason": "malformed busy interval"}]
+
+
+@pytest.mark.parametrize("response", [
+    None, {}, {"guest@example.com": {"busy": []}},
+    {"primary": {"busy": []}, "guest@example.com": {"busy": [], "errors": [{"reason": "notFound"}]}},
+])
+def test_mutual_first_slot_refuses_unknown_availability(fake_service, response):
+    details = EventCreateRequest(summary="Sync", start=EventDateTime(dateTime=_iv(9, 10)["start"]), end=EventDateTime(dateTime=_iv(9, 10)["end"]))
+    with patch.object(calendar_actions, "find_availability", return_value=response) as availability, \
+            patch.object(calendar_actions, "create_event") as create:
+        with pytest.raises(ValueError, match="Availability is unknown"):
+            calendar_actions.find_mutual_availability_and_schedule(
+                CREDS, ["guest@example.com"], _iv(9, 17)["start"], _iv(9, 17)["end"], 60, details,
+            )
+        assert availability.call_args.kwargs["calendar_ids"] == ["primary", "guest@example.com"]
+        create.assert_not_called()
+
+
+def test_mutual_first_slot_respects_organizer_busy_time(fake_service):
+    start = FUTURE.replace(hour=9, minute=0, second=0, microsecond=0)
+    end = start + timedelta(hours=8)
+    busy_end = start + timedelta(hours=2)
+    details = EventCreateRequest(
+        summary="Sync", start=EventDateTime(dateTime=start),
+        end=EventDateTime(dateTime=start + timedelta(hours=1)),
+    )
+    response = {
+        "primary": {"busy": [{"start": start, "end": busy_end}]},
+        "guest@example.com": {"busy": []},
+    }
+    with patch.object(calendar_actions, "find_availability", return_value=response), \
+            patch.object(calendar_actions, "create_event") as create:
+        calendar_actions.find_mutual_availability_and_schedule(
+            CREDS, ["guest@example.com"], start, end, 60, details,
+        )
+        assert create.call_args.kwargs["event_data"].start.dateTime == busy_end

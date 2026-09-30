@@ -15,6 +15,7 @@ from typing import List, Optional, Tuple
 from calendar_mcp import preferences as preferences_module
 from calendar_mcp import scheduling as scheduling_logic
 from calendar_mcp import server as srv
+from calendar_mcp.availability import require_complete_availability
 from calendar_mcp.models import (
     BusyPeriod,
     CalendarBusyPeriods,
@@ -186,6 +187,7 @@ async def schedule_mutual(
 
     Reads each attendee's free/busy inside the window, picks the earliest gap
     that fits `duration_minutes`, and creates the event with all of them invited.
+    Refuses to book if any attendee or organizer availability is unknown.
     Fails with an error if no common slot exists -- widen the window or shorten
     the meeting and try again.
 
@@ -212,7 +214,6 @@ async def schedule_mutual(
         account: Account name from 'calendar-mcp accounts'; omit for the default.
     """
     provider = srv._provider(ctx)
-    problems: List[str] = []
 
     def work() -> EventResult:
         if duration_minutes <= 0:
@@ -304,15 +305,12 @@ async def schedule_mutual(
         raw = srv.calendar_actions.find_availability(
             credentials=creds, time_min=start, time_max=end, calendar_ids=lookup
         )
-        if raw is None:
-            raise srv._no_result("Querying free/busy")
-        busy: List[Interval] = []
-        for cal_id, data in raw.items():
-            for error in data.get("errors") or []:
-                reason = error.get("reason", str(error)) if isinstance(error, dict) else str(error)
-                problems.append(f"{cal_id}: {reason}")
-            for interval in data.get("busy", []):
-                busy.append((interval["start"], interval["end"]))
+        require_complete_availability(raw, lookup)
+        busy = [
+            (interval["start"], interval["end"])
+            for cal_id in lookup
+            for interval in raw[cal_id]["busy"]
+        ]
 
         blocks = scheduling_logic.candidate_blocks(
             windows,
@@ -367,11 +365,4 @@ async def schedule_mutual(
             ),
         )
 
-    result = await srv._run(work)
-    if problems:
-        await srv._warn(
-            ctx,
-            "Free/busy could not be read for: " + "; ".join(problems)
-            + ". Those calendars were treated as free.",
-        )
-    return result
+    return await srv._run(work)

@@ -15,13 +15,14 @@ helpers -- :func:`zone_for` and :func:`selected_calendar_ids` -- are shared with
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from googleapiclient.errors import HttpError
 
 from calendar_mcp import preferences as preferences_module
 from calendar_mcp import scheduling as scheduling_logic
 from calendar_mcp import server as srv
+from calendar_mcp.availability import require_complete_availability
 from calendar_mcp.models import (
     BlockedFocusEvent,
     BlockedFocusResult,
@@ -52,11 +53,14 @@ def selected_calendar_ids(creds) -> List[str]:
 
     Hidden, deleted and unselected calendars are skipped -- a calendar the user
     has switched off in the Google UI should not eat their focus time. Falls
-    back to ``['primary']`` when the list cannot be read or is empty.
+    back to ``['primary']`` when the list is empty; an unreadable list is an error.
     """
     response = srv.calendar_actions.find_calendars(creds)
     if response is None:
-        return ["primary"]
+        raise srv.CalendarToolError(
+            "Availability is unknown: the selected calendar list could not be read. "
+            "No scheduling changes were made. Restore calendar access or retry."
+        )
     chosen = [
         entry.id
         for entry in response.items
@@ -70,26 +74,20 @@ def _busy_intervals(
     time_min: datetime,
     time_max: datetime,
     calendar_ids: List[str],
-) -> Tuple[List[Interval], List[str]]:
-    """Free/busy across ``calendar_ids``, as intervals plus per-calendar problems."""
+) -> List[Interval]:
+    """Read busy intervals only when every requested calendar is known."""
     raw = srv.calendar_actions.find_availability(
         credentials=creds,
         time_min=time_min,
         time_max=time_max,
         calendar_ids=list(calendar_ids),
     )
-    if raw is None:
-        raise srv._no_result("Reading free/busy")
-
-    busy: List[Interval] = []
-    problems: List[str] = []
-    for calendar_id, data in raw.items():
-        for error in data.get("errors") or []:
-            reason = error.get("reason", str(error)) if isinstance(error, dict) else str(error)
-            problems.append(f"{calendar_id}: {reason}")
-        for interval in data.get("busy", []):
-            busy.append((interval["start"], interval["end"]))
-    return busy, problems
+    require_complete_availability(raw, calendar_ids)
+    return [
+        (interval["start"], interval["end"])
+        for calendar_id in dict.fromkeys(calendar_ids)
+        for interval in raw[calendar_id]["busy"]
+    ]
 
 
 def _to_block(interval: Interval, zone) -> FocusBlock:
@@ -112,14 +110,14 @@ def _find_blocks(
     time_max: datetime,
     calendar_ids: List[str],
     zone,
-) -> Tuple[List[Interval], List[str]]:
-    """The usable focus blocks in the window, plus any unreadable calendars.
+) -> List[Interval]:
+    """The usable focus blocks in a window with fully known availability.
 
     Working hours (minus lunch) come from the preferences, busy time from
     free/busy across ``calendar_ids``, and the buffer and minimum block length
     from the preferences again.
     """
-    busy, problems = _busy_intervals(creds, time_min, time_max, calendar_ids)
+    busy = _busy_intervals(creds, time_min, time_max, calendar_ids)
     windows = preferences_module.working_windows(prefs, time_min, time_max, zone)
     blocks = scheduling_logic.candidate_blocks(
         windows,
@@ -127,7 +125,7 @@ def _find_blocks(
         min_block_minutes=prefs.min_focus_block_minutes,
         buffer_minutes=prefs.buffer_minutes,
     )
-    return blocks, problems
+    return blocks
 
 
 def _validate_window(start: datetime, end: datetime, hours_needed: float) -> None:
@@ -163,6 +161,8 @@ async def find_focus_time(
     that is the one worth protecting. Blocks shorter than
     `min_focus_block_minutes` are not reported at all.
 
+    Availability must be readable for every requested calendar; otherwise this
+    returns an error rather than unverified free time.
     Read-only: use `block_focus_time` to actually defend the time.
 
     Args:
@@ -176,7 +176,6 @@ async def find_focus_time(
         account: Account name from 'calendar-mcp accounts'; omit for the default.
     """
     provider = srv._provider(ctx)
-    problems: List[str] = []
 
     def work() -> FocusTimeResult:
         creds = provider.get(account)
@@ -187,8 +186,7 @@ async def find_focus_time(
 
         zone = zone_for(prefs, creds)
         ids = [str(item) for item in calendar_ids] if calendar_ids else selected_calendar_ids(creds)
-        blocks, issues = _find_blocks(creds, prefs, start, end, ids, zone)
-        problems.extend(issues)
+        blocks = _find_blocks(creds, prefs, start, end, ids, zone)
 
         available = scheduling_logic.total_hours(blocks)
         satisfiable = available + 1e-9 >= hours_needed
@@ -226,12 +224,6 @@ async def find_focus_time(
         )
 
     result = await srv._run(work)
-    if problems:
-        await srv._warn(
-            ctx,
-            "Free/busy could not be read for: " + "; ".join(problems)
-            + ". Those calendars were treated as free.",
-        )
     return result
 
 
@@ -260,6 +252,8 @@ async def block_focus_time(
     created busy, with reminders off and without notifying anyone.
 
     Run it with `dry_run` first when the user has not yet agreed to the times.
+    Both preview and booking fail before writing if any checked calendar has
+    unknown availability. The destination calendar is always checked too.
 
     Args:
         time_min: Start of the window to book inside, ISO 8601.
@@ -276,7 +270,6 @@ async def block_focus_time(
         account: Account name from 'calendar-mcp accounts'; omit for the default.
     """
     provider = srv._provider(ctx)
-    problems: List[str] = []
 
     def work() -> BlockedFocusResult:
         creds = provider.get(account)
@@ -296,8 +289,8 @@ async def block_focus_time(
             if check_calendar_ids
             else selected_calendar_ids(creds)
         )
-        blocks, issues = _find_blocks(creds, prefs, start, end, ids, zone)
-        problems.extend(issues)
+        ids = list(dict.fromkeys([*ids, target]))
+        blocks = _find_blocks(creds, prefs, start, end, ids, zone)
 
         available = scheduling_logic.total_hours(blocks)
         chosen = scheduling_logic.select_blocks(
@@ -388,12 +381,6 @@ async def block_focus_time(
         )
 
     result = await srv._run(work)
-    if problems:
-        await srv._warn(
-            ctx,
-            "Free/busy could not be read for: " + "; ".join(problems)
-            + ". Those calendars were treated as free.",
-        )
     if not result.dry_run and not result.satisfied:
         await srv._warn(ctx, result.message)
     return result
