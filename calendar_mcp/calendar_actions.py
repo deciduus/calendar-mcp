@@ -8,6 +8,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google.oauth2.credentials import Credentials
 
+from .availability import require_complete_availability
 from .models import (
     GoogleCalendarEvent,
     EventsResponse,
@@ -788,19 +789,24 @@ def find_availability(
 
         for cal_id, data in calendars_data.items():
             busy_intervals = []
-            for interval in data.get('busy', []):
+            errors = list(data.get("errors") or [])
+            if not isinstance(data.get("busy"), list):
+                errors.append({"reason": "missing or malformed busy intervals"})
+            for interval in data.get('busy', []) or []:
                 try:
                     # Parse RFC3339 strings back to datetime objects
                     start_dt = parser.isoparse(interval.get('start'))
                     end_dt = parser.isoparse(interval.get('end'))
+                    if start_dt.utcoffset() is None or end_dt.utcoffset() is None or end_dt <= start_dt:
+                        raise ValueError("busy interval must have offsets and a positive duration")
                     busy_intervals.append({'start': start_dt, 'end': end_dt})
-                except (TypeError, ValueError) as parse_error:
+                except (AttributeError, TypeError, ValueError) as parse_error:
                     logger.warning(f"Could not parse busy interval for {cal_id}: {interval}. Error: {parse_error}")
-                    # Optionally add this interval with raw strings or skip it
+                    errors.append({"reason": "malformed busy interval"})
 
             processed_results[cal_id] = {
                 'busy': busy_intervals,
-                'errors': data.get('errors', []) # Keep API errors as is
+                'errors': errors  # Preserve API and parsing errors; unknown is not free.
             }
 
         logger.info(f"Successfully retrieved free/busy information for {len(processed_results)} calendars.")
@@ -997,27 +1003,21 @@ def find_mutual_availability_and_schedule(
     logger.info(f"Attempting to find mutual availability and schedule for: {attendee_calendar_ids}")
     logger.info(f"Search window: {time_min} to {time_max}, Duration: {duration_minutes} mins")
 
-    # 1. Find availability for all attendees
+    # 1. The organizer must be readable and free too.
+    lookup = list(dict.fromkeys([organizer_calendar_id, *attendee_calendar_ids]))
     availability_data = find_availability(
         credentials=credentials,
         time_min=time_min,
         time_max=time_max,
-        calendar_ids=attendee_calendar_ids
+        calendar_ids=lookup
     )
 
-    if availability_data is None:
-        logger.error("Failed to retrieve availability data.")
-        return None
+    require_complete_availability(availability_data, lookup)
 
-    # 2. Aggregate and merge all busy intervals
-    all_busy_intervals: List[Dict[str, datetime]] = []
-    for cal_id, data in availability_data.items():
-        if data.get('errors'):
-            logger.warning(f"Encountered errors fetching availability for {cal_id}: {data['errors']}")
-            # Decide how to handle errors: fail, proceed without this calendar, etc.
-            # For now, let's log a warning and proceed, potentially scheduling over their busy time.
-            # A stricter approach would be to return None here.
-        all_busy_intervals.extend(data.get('busy', []))
+    # 2. Aggregate only after every requested calendar passed validation.
+    all_busy_intervals = [
+        interval for cal_id in lookup for interval in availability_data[cal_id]["busy"]
+    ]
 
     merged_busy = _merge_intervals(all_busy_intervals)
     logger.debug(f"Merged busy intervals: {merged_busy}")

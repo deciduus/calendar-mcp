@@ -21,6 +21,7 @@ from calendar_mcp import accounts as accounts_module
 from calendar_mcp import preferences as preferences_module
 from calendar_mcp import scheduling as scheduling_logic
 from calendar_mcp import server as srv
+from calendar_mcp.availability import require_complete_availability
 from calendar_mcp.models import (
     ConflictEventRef,
     ConflictsResult,
@@ -373,9 +374,9 @@ async def suggest_reschedule(
             time_max=search_max,
             calendar_ids=[calendar_id] + attendees,
         )
-        if raw is None:
-            raise srv._no_result("Reading free/busy")
-        for key, data in raw.items():
+        require_complete_availability(raw, [calendar_id] + attendees)
+        for key in dict.fromkeys([calendar_id] + attendees):
+            data = raw[key]
             intervals = [(item["start"], item["end"]) for item in data.get("busy", [])]
             if key == calendar_id:
                 organizer_busy = intervals
